@@ -58,7 +58,7 @@ first. Set it precisely.
 
 - [ ] **[you]** Description (Settings → General, or the gear on the repo home):
 
-  > Verified tutorials & demo videos from your README. An AI agent runs your README in a hardened Docker sandbox and replays it in a fresh container before publishing. MIT.
+  > Verified tutorials and demo videos from your README. An AI agent runs it in a hardened Docker sandbox and replays it in a fresh container before anything is published.
 
 - [ ] **[you]** Website field → your docs site URL (after step 3):
   `https://alphacrack.github.io/readme2demo/`
@@ -75,7 +75,7 @@ claude  llm  cli  python  readme
 
 ```bash
 gh repo edit alphacrack/readme2demo \
-  --description "Verified tutorials & demo videos from your README. An AI agent runs your README in a hardened Docker sandbox and replays it in a fresh container before publishing. MIT." \
+  --description "Verified tutorials and demo videos from your README. An AI agent runs it in a hardened Docker sandbox and replays it in a fresh container before anything is published." \
   --homepage "https://alphacrack.github.io/readme2demo/" \
   --add-topic ai-agents --add-topic developer-tools --add-topic documentation \
   --add-topic docs-as-code --add-topic devops --add-topic tutorial-generator \
@@ -119,15 +119,31 @@ The site is built by `.github/workflows/docs.yml` (already added).
   - Require branches to be up to date before merging.
   - (Optional) Require signed commits.
 
+Use a typed JSON body via `--input` (the `-f` flag sends everything as strings,
+which the API rejects with a 422). The status-check contexts must match the CI
+job names (`lint`, and `test (3.x)` for each matrix Python version):
+
 ```bash
 gh api -X PUT repos/alphacrack/readme2demo/branches/main/protection \
   -H "Accept: application/vnd.github+json" \
-  -f "required_status_checks[strict]=true" \
-  -f "required_status_checks[contexts][]=lint" \
-  -f "enforce_admins=true" \
-  -f "required_pull_request_reviews[required_approving_review_count]=1" \
-  -f "restrictions=null"
+  --input - <<'JSON'
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": ["lint", "test (3.10)", "test (3.11)", "test (3.12)", "test (3.13)"]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": { "required_approving_review_count": 1 },
+  "restrictions": null
+}
+JSON
 ```
+
+> **Solo-maintainer caveat:** `required_approving_review_count: 1` means you
+> can't merge your own PRs without a second person approving. If you're the
+> only maintainer, set it to `0`, or replace the whole
+> `"required_pull_request_reviews"` value with `null`, so status checks still
+> gate merges but you aren't locked out.
 
 ---
 

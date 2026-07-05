@@ -2,12 +2,11 @@ cff-version: 1.2.0
 message: "If you use readme2demo in your work, please cite it as below."
 title: "readme2demo: verified tutorials and demo videos from a repo's README"
 abstract: >-
-  readme2demo points an AI agent at a repository, runs its README inside a
-  hardened Docker sandbox, independently replays the distilled result in a
-  fresh container, and only then publishes a tutorial, a step-by-step guide, a
-  troubleshooting doc, structured HowTo JSON-LD, and a demo video that executes
-  every step on camera. The core guarantee: nothing is published that a
-  clean-room replay did not execute.
+  Verified tutorials and demo videos from your README. An AI agent runs it in a
+  hardened Docker sandbox and replays it in a fresh container before anything is
+  published. It produces a tutorial, step-by-step guide, troubleshooting doc,
+  structured HowTo JSON-LD, and a demo video — nothing a clean-room replay in a
+  fresh container did not independently execute.
 type: software
 authors:
   - name: "readme2demo contributors"
