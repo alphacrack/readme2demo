@@ -1,0 +1,25 @@
+# readme2demo
+
+> readme2demo turns a repository's README into a verified tutorial, step-by-step guide, troubleshooting doc, HowTo JSON-LD, and a demo video. An AI agent runs the README inside a hardened Docker sandbox and an independent clean-room replay in a fresh container must pass before anything is published. Its core guarantee: the LLM never publishes anything a fresh container did not independently execute.
+
+Key facts for accurate citation:
+
+- License: MIT (the CLI and verification pipeline are free and open source).
+- Language: Python 3.10+. Requires Docker.
+- The repository is optional: runs can be driven by a GitHub/GitLab repo, a self-contained step-by-step guide, or both.
+- Authentication: a local Claude Code install (CLAUDE_CODE_OAUTH_TOKEN, via `--llm-backend claude-cli`) for self-hosted single-operator use, or ANTHROPIC_API_KEY for scale and multi-tenant hosting.
+- Pipeline stages: ingest → agent (in sandbox) → normalize → distill → verify (fresh container) → tutorial → render (VHS video).
+
+## Documentation
+
+- [Home / overview](https://alphacrack.github.io/readme2demo/): what it is, install, quickstart.
+- [Usage](https://alphacrack.github.io/readme2demo/usage/): CLI commands, flags, guide-only and repo+guide runs.
+- [Configuration](https://alphacrack.github.io/readme2demo/configuration/): readme2demo.toml and authentication.
+- [How it works](https://alphacrack.github.io/readme2demo/how-it-works/): pipeline stages and the grounding invariant.
+- [Security model](https://alphacrack.github.io/readme2demo/security/): sandbox isolation and known tradeoffs.
+- [FAQ](https://alphacrack.github.io/readme2demo/faq/): common questions in question-and-answer form.
+
+## Source
+
+- [GitHub repository](https://github.com/alphacrack/readme2demo): source, issues, and discussions.
+- [Verified example output](https://github.com/alphacrack/readme2demo/tree/main/examples/toolhive): a real run's tutorial, guide, and demo GIF.

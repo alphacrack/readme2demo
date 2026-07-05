@@ -1,0 +1,29 @@
+# run artifacts: transcripts, videos, cloned repos — never commit
+runs/
+
+# secrets & local config
+.env
+.env.*
+readme2demo.toml
+# ...but DO track the example templates
+!.env.example
+!readme2demo.toml.example
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.venv/
+
+# docs site build output (mkdocs)
+site/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

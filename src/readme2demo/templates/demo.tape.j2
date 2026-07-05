@@ -1,0 +1,65 @@
+{#-
+  VHS tape template (M5). Rendered by distill.write_artifacts with
+  trim_blocks + lstrip_blocks, context: tape = list[TapeCommand].
+
+  The tape IS the step_by_step.md on camera: it executes every guide step
+  for real inside the base image (which layers toolchains on top of the
+  official VHS image). The hidden preamble moves the session into the empty
+  /work directory so the guide's own `git clone ... .` works.
+
+  Pacing: after each command, `Wait` blocks until the shell prompt returns
+  (i.e. the command finished — builds included; WaitTimeout bounds it), then
+  a short Sleep gives viewers time to read the output. Wait+Screen on output
+  text is deliberately NOT used: it only matches the visible buffer, so any
+  pattern in longer-than-one-screen output scrolls away and times out.
+
+  Quoting: VHS string literals do not support backslash escapes; the
+  vhs_quote filter picks a delimiter (" then ` then ') the text doesn't
+  contain.
+-#}
+Output demo.mp4
+
+Set FontSize 18
+Set Width 1200
+Set Height 700
+Set Framerate 24
+Set TypingSpeed 50ms
+Set Theme "Catppuccin Mocha"
+Set Shell bash
+Set WaitTimeout 600s
+
+Hide
+Type "cd /work && clear"
+Enter
+Wait
+Show
+
+{% for tc in tape %}
+{% if tc.comment %}
+Type {{ ('# ' + tc.comment) | vhs_quote }}
+Enter
+Sleep 800ms
+{% endif %}
+{% if tc.hide %}
+Hide
+{% endif %}
+{% if tc.lines %}
+{#- heredoc / multi-line: type each line, Enter between, so it plays on camera -#}
+{% for ln in tc.lines %}
+Type {{ ln | vhs_quote }}
+Enter
+{% endfor %}
+Wait
+Sleep {{ tc.sleep_after_s }}s
+{% else %}
+Type {{ tc.cmd | vhs_quote }}
+Enter
+Wait
+Sleep {{ tc.sleep_after_s }}s
+{% endif %}
+{% if tc.hide %}
+Show
+{% endif %}
+
+{% endfor %}
+Sleep 3s

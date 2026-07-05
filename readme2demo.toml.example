@@ -1,0 +1,31 @@
+# readme2demo configuration — copy to `readme2demo.toml` and edit.
+# Precedence: CLI flags > readme2demo.toml > built-in defaults.
+# (readme2demo.toml is gitignored; this .example file is the tracked template.)
+
+# --- Agent engine -----------------------------------------------------------
+engine = "claude-code"        # or "openhands" (experimental)
+model = "claude-sonnet-5"     # model for planner / distiller / tutorial passes
+llm_backend = "auto"          # auto | api | claude-cli
+max_turns = 60
+agent_timeout_s = 1500
+budget_usd = 5.0              # abort a run if the agent exceeds this
+
+# --- Sandbox ----------------------------------------------------------------
+base_image = "readme2demo/base:latest"
+network = "bridge"
+memory = "4g"
+cpus = "2"
+pids_limit = 512
+# SECURITY TRADEOFF — off by default. Mounts the host Docker socket into the
+# sandbox so demos that manage containers work. This pierces isolation; only
+# enable for repos you trust.
+allow_docker_socket = false
+
+# --- Stages -----------------------------------------------------------------
+verify_timeout_s = 900
+verify_retries = 1
+distill_retries = 1
+skip_video = false
+
+# --- Layout -----------------------------------------------------------------
+runs_dir = "runs"

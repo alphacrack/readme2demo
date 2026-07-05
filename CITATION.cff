@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use readme2demo in your work, please cite it as below."
+title: "readme2demo: verified tutorials and demo videos from a repo's README"
+abstract: >-
+  readme2demo points an AI agent at a repository, runs its README inside a
+  hardened Docker sandbox, independently replays the distilled result in a
+  fresh container, and only then publishes a tutorial, a step-by-step guide, a
+  troubleshooting doc, structured HowTo JSON-LD, and a demo video that executes
+  every step on camera. The core guarantee: nothing is published that a
+  clean-room replay did not execute.
+type: software
+authors:
+  - name: "readme2demo contributors"
+    alias: alphacrack
+repository-code: "https://github.com/alphacrack/readme2demo"
+url: "https://github.com/alphacrack/readme2demo"
+license: MIT
+version: 0.1.0
+date-released: "2026-07-05"
+keywords:
+  - ai-agents
+  - developer-tools
+  - documentation
+  - docs-as-code
+  - tutorial-generator
+  - demo-video
+  - sandbox
+  - verification
+  - llm

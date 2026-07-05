@@ -1,0 +1,10 @@
+# Default review owner for everything in the repo.
+# Replace @alphacrack with the GitHub handle(s) or team that should be
+# auto-requested for review on every pull request.
+*       @alphacrack
+
+# The grounding invariant lives in these files — guard them closely.
+/src/readme2demo/distill.py      @alphacrack
+/src/readme2demo/verify.py       @alphacrack
+/src/readme2demo/normalize.py    @alphacrack
+/src/readme2demo/sandbox.py      @alphacrack

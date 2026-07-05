@@ -1,0 +1,96 @@
+{
+  "run_id": "toolhive-20260703-124148-9db7f4",
+  "repo_url": "https://github.com/stacklok/toolhive",
+  "commit_sha": "a935334ff4271a847879245c74a2198710143bd9",
+  "engine": "claude-code",
+  "base_image": "readme2demo/base:latest",
+  "created_at": "2026-07-03T12:41:48.658139+00:00",
+  "stages": {
+    "ingest": {
+      "status": "completed",
+      "started_at": "2026-07-03T12:41:48.659685+00:00",
+      "finished_at": "2026-07-03T12:42:04.985297+00:00",
+      "error": null,
+      "cost_usd": 0.22707850000000002,
+      "meta": {
+        "feasible": true
+      }
+    },
+    "agent": {
+      "status": "completed",
+      "started_at": "2026-07-03T12:42:04.987884+00:00",
+      "finished_at": "2026-07-03T12:47:19.120665+00:00",
+      "error": null,
+      "cost_usd": 0.0,
+      "meta": {}
+    },
+    "normalize": {
+      "status": "completed",
+      "started_at": "2026-07-03T12:47:19.124128+00:00",
+      "finished_at": "2026-07-03T12:47:19.130653+00:00",
+      "error": null,
+      "cost_usd": 0.280791,
+      "meta": {
+        "outcome": "success",
+        "commands": 14,
+        "adjusted_success": null,
+        "source_modified": null,
+        "guide_steps_unattempted": [
+          "uname -m",
+          "curl -sLo /tmp/go.tgz https://go.dev/dl/go1.26.4.linux-arm64.tar.gz   # or ...linux-amd64.tar.gz",
+          "sudo tar -C /usr/local -xzf /tmp/go.tgz",
+          "export PATH=/usr/local/go/bin:$PATH",
+          "go version",
+          "mkdir -p /work && cd /work",
+          "curl -sL https://github.com/stacklok/toolhive/archive/refs/heads/main.tar.gz | tar xz --strip-components=1"
+        ]
+      }
+    },
+    "distill": {
+      "status": "completed",
+      "started_at": "2026-07-03T12:47:19.131603+00:00",
+      "finished_at": "2026-07-03T12:47:48.594803+00:00",
+      "error": null,
+      "cost_usd": 0.11343670000000002,
+      "meta": {
+        "tape_coverage": "9/15 guide steps"
+      }
+    },
+    "verify": {
+      "status": "completed",
+      "started_at": "2026-07-03T12:47:48.596039+00:00",
+      "finished_at": "2026-07-03T12:51:09.960723+00:00",
+      "error": null,
+      "cost_usd": 0.0,
+      "meta": {
+        "attempts": 1,
+        "exit_code": 0
+      }
+    },
+    "render": {
+      "status": "completed",
+      "started_at": "2026-07-03T12:51:09.968606+00:00",
+      "finished_at": "2026-07-03T13:00:35.850330+00:00",
+      "error": null,
+      "cost_usd": 0.0,
+      "meta": {
+        "artifacts": [
+          "demo.mp4",
+          "demo.gif"
+        ]
+      }
+    },
+    "tutorial": {
+      "status": "completed",
+      "started_at": "2026-07-03T13:00:35.873609+00:00",
+      "finished_at": "2026-07-03T13:00:54.116519+00:00",
+      "error": null,
+      "cost_usd": 0.0656107,
+      "meta": {
+        "step_by_step": "repo-provided"
+      }
+    }
+  },
+  "verified": true,
+  "total_cost_usd": 0.686917
+}

@@ -1,0 +1,124 @@
+# readme2demo — verified tutorials & demo videos from your README
+
+[![tests](https://github.com/alphacrack/readme2demo/actions/workflows/ci.yml/badge.svg)](https://github.com/alphacrack/readme2demo/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
+<!-- HERO:START — scripts/self-demo.sh rewrites this block with a fresh self-run.
+     Run it locally (needs Docker + VHS + a model credential):
+       ./scripts/self-demo.sh
+     It runs readme2demo on this very repo, following docs/step-by-step.md,
+     and drops the verified demo.gif in right here. -->
+[![readme2demo verified demo](examples/toolhive/demo.gif)](examples/toolhive/)
+
+<sub>▶ A real, unedited readme2demo run on [ToolHive](examples/toolhive/) — every command was replayed in a clean container **before** this GIF was rendered.</sub>
+<!-- HERO:END -->
+
+**AI-verified tutorial and demo video generator.** Point it at a repo. An AI agent reads the README and actually runs it inside a hardened Docker sandbox. Only after a clean-room replay passes does it render a demo video (VHS) and publish the tutorial, step-by-step guide, and troubleshooting doc.
+
+The value is not "AI writes a tutorial" — it's that the tutorial **ran, twice**, before you saw it.
+
+**See it in action:** browse [verified example runs](examples/) — real tutorials, step-by-step guides, and demo videos, each independently replayed in a clean container before publishing.
+
+## How it works
+
+```
+repo URL → ingest/plan → agent run (in Docker) → normalize transcript
+        → distill minimal path → VERIFY replay in fresh container
+        → render VHS video → generate tutorial.md + troubleshooting.md
+```
+
+See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full architecture.
+
+## Requirements
+
+- Python ≥ 3.10, Docker
+- Auth, one of:
+  - **Your Claude subscription (no API key):** a local Claude Code install. The planner/distiller/tutorial passes run on your subscription via `--llm-backend claude-cli` (`claude -p`), and the in-sandbox agent authenticates with `CLAUDE_CODE_OAUTH_TOKEN` (create one: `claude setup-token`). Fully supported for **self-hosted, single-operator** runs against your own repos — Pro/Max plans include a monthly Agent SDK credit that covers `claude -p`.
+  - `ANTHROPIC_API_KEY` — metered API billing; best for scale and concurrency, and **required if you host readme2demo as a service for others** (per Anthropic's terms, subscription auth may not power a multi-tenant product — see [ROADMAP.md](ROADMAP.md)).
+- Optional: `LLM_API_KEY` + `LLM_MODEL` for `--engine openhands` (experimental)
+
+```bash
+# run on your Claude subscription (no API key) — supported for self-hosted runs
+claude setup-token        # interactive: approve in browser, then COPY the
+                          # sk-ant-oat01-... token it prints (do NOT use $(...))
+export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+readme2demo run <repo-url> --llm-backend claude-cli
+
+# run on metered API billing (scale, concurrency, or hosting for others)
+export ANTHROPIC_API_KEY=sk-ant-...
+readme2demo run <repo-url>              # --llm-backend auto picks api
+```
+
+## Install
+
+```bash
+pip install -e ".[dev]"
+docker build -t readme2demo/base:latest images/base/
+```
+
+## Usage
+
+```bash
+readme2demo run https://github.com/example/tool
+readme2demo run -gr https://github.com/example/tool             # same, via the flag
+readme2demo run -s my_guide.md                                  # guide-only: no repo, your guide is self-contained
+readme2demo run -gr https://github.com/example/tool -s my_guide.md   # both: your guide drives everything
+readme2demo run https://github.com/example/tool --allow-docker-socket  # for tools that manage containers (SECURITY TRADEOFF: pierces sandbox isolation — trusted repos only)
+readme2demo run https://github.com/example/tool --skip-video --budget-usd 3
+readme2demo resume runs/tool-20260702-... --from-stage render
+readme2demo report runs/tool-20260702-...
+```
+
+The repo is **optional**: pass it positionally or with `-gr/--github-repo`, supply a guide with `-s/--step-by-step`, or both. At least one is required. With a guide alone, no repo is cloned — the guide must be self-contained (install a published package, or clone what it needs as an explicit step); the fresh-container replay still verifies every command.
+
+Outputs land in `runs/<run-id>/`: `tutorial.md`, `step_by_step.md`, `troubleshooting.md`, `commands.sh`, `demo.tape`, `demo.mp4`, `demo.gif`, plus `manifest.json` with stage statuses and total cost.
+
+## step_by_step.md — the video's source
+
+The demo video is always built **from** `step_by_step.md`: its steps are parsed, and every demo-safe, grounded command becomes a typed command in the video with the step title shown as an on-screen comment. Three ways it comes to exist, in priority order:
+
+1. **You pass one**: `readme2demo run <url> -s my_guide.md` — injected into the clone as the authoritative guide; planner and agent follow it, video plays it. The `<url>` is optional here: `readme2demo run -s my_guide.md` runs guide-only against an empty sandbox.
+2. **The repo ships one** (`step_by_step.md` / `step-by-step.md` at root or `docs/`, any case): same treatment, automatically.
+3. **Neither exists**: the pipeline *generates* a detailed `step_by_step.md` — every command from the verified `commands.sh` as a numbered step with real captured outputs — then builds the video from it. Ready to contribute back to the repo.
+
+Setup steps (clones, installs, builds) are documented in the guide but kept out of the video — it plays against the verified, already-built worktree, showing the payoff.
+
+Every tutorial carries a verification badge: `✅ Verified on <date> · image <digest> · commit <sha>` — or a loud `⚠ UNVERIFIED` if the replay didn't pass. Unverified output is never silently published.
+
+## Configuration
+
+CLI flags > `readme2demo.toml` > defaults:
+
+```toml
+engine = "claude-code"      # or "openhands"
+model = "claude-sonnet-5"   # planner/distiller/tutorial passes
+max_turns = 60
+budget_usd = 5.0
+base_image = "readme2demo/base:latest"
+skip_video = false
+```
+
+## Development
+
+```bash
+python -m pytest tests/ -q            # 175 unit tests, no docker/network needed
+ruff check src/ tests/               # correctness lint (matches CI)
+python -m pytest -m integration      # requires docker + API keys (none yet)
+```
+
+## Security model
+
+READMEs are untrusted code. The agent runs *inside* a hardened container (cap-drop ALL, no-new-privileges, memory/cpu/pids limits, non-root) — that container is the permission boundary. Known MVP tradeoff: the API key enters the sandbox; use a dedicated low-limit key. A host-side key-injecting egress proxy is planned (Milestone 4).
+
+Full threat model and private vulnerability reporting: [SECURITY.md](SECURITY.md).
+
+## Project & community
+
+- [Examples](examples/) — verified output committed as proof
+- [Roadmap](ROADMAP.md) — where this is headed (including the exploratory hosted/SaaS direction)
+- [Contributing](CONTRIBUTING.md) — the one non-negotiable rule, and how to get set up
+- [Security policy](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Architecture](architecture/README.md) — stage boundaries and diagrams
+
+MIT licensed. The CLI and verification pipeline are, and will stay, free and open source.

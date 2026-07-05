@@ -1,0 +1,73 @@
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Build ToolHive (thv) from Source",
+  "description": "ToolHive is a lightweight, secure CLI written in Go for managing MCP (Model Context Protocol) servers using container isolation. Every command verified in a clean container.",
+  "datePublished": "2026-07-03",
+  "isBasedOn": "https://github.com/stacklok/toolhive",
+  "tool": [
+    {
+      "@type": "HowToTool",
+      "name": "go>=1.26"
+    },
+    {
+      "@type": "HowToTool",
+      "name": "git"
+    }
+  ],
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Check your Go and Git versions",
+      "text": "Before building anything, it's good practice to confirm the tools you need are installed and meet the version requirements. This command prints your installed Go and Git versions so you can verify your environment is ready.",
+      "itemListElement": [
+        {
+          "@type": "HowToDirection",
+          "text": "go version && git --version"
+        }
+      ]
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Compile the thv CLI",
+      "text": "This command compiles ToolHive's source code into a single executable binary. Go automatically downloads any missing dependencies listed in the project before compiling, then places the finished binary at `bin/thv` for you to run.",
+      "itemListElement": [
+        {
+          "@type": "HowToDirection",
+          "text": "go build -o bin/thv ./cmd/thv"
+        }
+      ]
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "See the available commands",
+      "text": "Running the freshly built binary with no arguments prints its usage and help text, listing all the subcommands ToolHive offers. This is a quick way to confirm the build succeeded and to get a first look at what `thv` can do.",
+      "itemListElement": [
+        {
+          "@type": "HowToDirection",
+          "text": "./bin/thv"
+        }
+      ]
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Confirm the build details",
+      "text": "This command prints build metadata about your local ToolHive binary, including the commit it was built from, the build timestamp, and the Go version used. It's a handy way to double-check exactly what you built.",
+      "itemListElement": [
+        {
+          "@type": "HowToDirection",
+          "text": "./bin/thv version"
+        }
+      ]
+    }
+  ],
+  "creativeWorkStatus": "verified",
+  "author": {
+    "@type": "SoftwareApplication",
+    "name": "readme2demo"
+  }
+}

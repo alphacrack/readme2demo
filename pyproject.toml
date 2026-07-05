@@ -1,0 +1,81 @@
+[project]
+name = "readme2demo"
+version = "0.1.0"
+description = "Verified tutorial + demo video generation: an AI agent actually runs your README in a sandbox before anything is published."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "alphacrack" }]
+keywords = [
+    "ai-agents",
+    "developer-tools",
+    "documentation",
+    "docs-as-code",
+    "devops",
+    "claude",
+    "vhs",
+    "tutorial-generator",
+    "demo-video",
+    "sandbox",
+    "verification",
+    "cli",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "pydantic>=2.7",
+    "jinja2>=3.1",
+    "anthropic>=0.34",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-mock>=3.14", "ruff>=0.6"]
+docs = ["mkdocs-material>=9.5", "mkdocs-minify-plugin>=0.8"]
+
+[project.urls]
+Homepage = "https://github.com/alphacrack/readme2demo"
+Repository = "https://github.com/alphacrack/readme2demo"
+Issues = "https://github.com/alphacrack/readme2demo/issues"
+
+[project.scripts]
+readme2demo = "readme2demo.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/readme2demo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "integration: requires docker, network, and API keys (deselect with '-m \"not integration\"')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Correctness-focused gate (pyflakes + syntax) rather than cosmetic style, so
+# CI stays green on the existing code while still catching real bugs (unused
+# imports, undefined names, f-strings without placeholders, ...). Widen the
+# select set deliberately, with its own PR, if you want stricter style checks.
+select = ["E9", "F"]
