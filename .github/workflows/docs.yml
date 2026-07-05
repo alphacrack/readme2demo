@@ -24,6 +24,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Ensures Pages is enabled with build_type=workflow. If Pages isn't
+      # available for the repo (e.g. a private repo on the Free plan), this
+      # step fails with a clear message instead of a vague deploy error.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
