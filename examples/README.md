@@ -17,12 +17,21 @@ readme2demo run <repo-url>
 
 | Repo | Result | Verified | Commit | Agent cost | Artifacts |
 |---|---|---|---|---|---|
+| [alphacrack/readme2demo](https://github.com/alphacrack/readme2demo) — **this tool, run on itself** | ✅ Verified | 2026-07-05 | `f677e21` | $0.72 | [tutorial](readme2demo/tutorial.md) · [step-by-step](readme2demo/step_by_step.md) · [troubleshooting](readme2demo/troubleshooting.md) · [commands.sh](readme2demo/commands.sh) · [demo.gif](readme2demo/demo.gif) |
 | [stacklok/toolhive](https://github.com/stacklok/toolhive) — Go CLI for MCP servers | ✅ Verified | 2026-07-03 | `a935334` | $0.69 | [tutorial](toolhive/tutorial.md) · [step-by-step](toolhive/step_by_step.md) · [troubleshooting](toolhive/troubleshooting.md) · [commands.sh](toolhive/commands.sh) · [demo.gif](toolhive/demo.gif) |
 
 > Runs are reproducible from the committed `manifest.json` in each folder —
 > engine, base image, commit SHA, per-stage status, and total cost included.
 
-### toolhive demo
+### readme2demo — the self-demo (how it works)
+
+readme2demo run against its own repo: install, run the tests, explore the CLI,
+and read a verified example — each step replayed in a fresh container before
+this was rendered.
+
+![readme2demo self-demo](readme2demo/demo.gif)
+
+### toolhive — another example
 
 ![toolhive demo](toolhive/demo.gif)
 
