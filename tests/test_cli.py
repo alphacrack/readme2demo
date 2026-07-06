@@ -11,9 +11,12 @@ import pytest
 import typer
 
 from readme2demo.cli import _resolve_repo
+from typer.testing import CliRunner
+from readme2demo.cli import app
 
 _URL = "https://github.com/owner/repo"
 
+runner = CliRunner()
 
 def test_positional_repo_only() -> None:
     assert _resolve_repo(_URL, None, None) == _URL
@@ -47,3 +50,9 @@ def test_repo_and_guide_both_returns_repo() -> None:
     # separately, so both are taken into account downstream.
     assert _resolve_repo(_URL, None, Path("g.md")) == _URL
     assert _resolve_repo(None, _URL, Path("g.md")) == _URL
+
+
+def test_version_flag():
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert result.output.strip() != ""
