@@ -56,3 +56,29 @@ def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert result.output.strip() != ""
+
+def test_report_json_output(tmp_path, monkeypatch):
+    import json
+    from readme2demo.manifest import Manifest
+
+  
+    manifest_data = {
+        "run_id": "test-run-123",
+        "verified": True,
+        "cost": 1.50,
+        "repo_commit": "abcdef123456",
+        "stages": {}
+    }
+    manifest_file = tmp_path / "manifest.json"
+    manifest_file.write_text(json.dumps(manifest_data))
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--json"])
+    
+    assert result.exit_code == 0
+    
+    parsed_output = json.loads(result.output)
+    
+    assert parsed_output["verified"] is True
+    assert parsed_output["cost"] == 0.0
+    assert "commit" in parsed_output
+    
