@@ -207,10 +207,13 @@ def report(
     manifest = Manifest.load(run_dir)
     if json_output:
         output_data = {
-            "stages": [{"name": s.name, "status": s.status} for s in getattr(manifest, "stages", [])] if hasattr(manifest, "stages") else {},
-            "verified": getattr(manifest, "verified", False),
-            "cost": getattr(manifest, "cost", 0.0),
-            "commit": getattr(manifest, "commit", None) or getattr(manifest, "repo_commit", None),
+            "stages": [
+                {"name": name, "status": rec.status}
+                for name, rec in manifest.stages.items()
+            ],
+            "verified": manifest.verified,
+            "cost": manifest.total_cost_usd,
+            "commit": manifest.commit_sha,
         }
         print(json.dumps(output_data, indent=2))
         raise typer.Exit(0)
