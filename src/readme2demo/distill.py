@@ -72,6 +72,40 @@ class DistillError(RuntimeError):
 # -- grounding ----------------------------------------------------------------
 
 
+# The agent frequently runs a guide's command in a sandbox-drifted but
+# equivalent form: by absolute path (`/home/demo/.local/bin/tool` vs `tool`),
+# via `python3` (vs the guide's `python`), or with `--break-system-packages`
+# (Debian's externally-managed Python forces it on `pip install`; the guide
+# omits it). Canonicalizing these makes a PROVEN command still ground.
+_ABS_EXE_RE = re.compile(r"^(?:/[\w.+-]+)+/([\w.+-]+)$")  # /a/b/bin/exe -> exe
+_ASSIGN_RE = re.compile(r"^[A-Za-z_]\w*=")               # NAME=val env prefix
+_DROP_FLAGS = frozenset({"--break-system-packages"})
+
+
+def _canonicalize_segment(seg: str) -> str:
+    """Canonicalize one command/segment so sandbox/syntax drift grounds.
+
+    Drops sandbox-only flags and normalizes the EXECUTABLE token only: an
+    absolute path collapses to its basename and ``python3`` maps to ``python``.
+    Argument paths are left untouched (``cat /etc/hosts`` stays as-is). Applied
+    symmetrically via :func:`normalize_cmd`, so it can never ground a command
+    the log didn't run — only the same command spelled differently.
+    """
+    toks = [t for t in seg.split(" ") if t not in _DROP_FLAGS]
+    i = 0
+    while i < len(toks) and _ASSIGN_RE.match(toks[i]):  # skip NAME=val prefixes
+        i += 1
+    if i < len(toks) and toks[i]:
+        exe = toks[i]
+        m = _ABS_EXE_RE.match(exe)
+        if m:
+            exe = m.group(1)
+        if exe == "python3":
+            exe = "python"
+        toks[i] = exe
+    return " ".join(toks)
+
+
 def normalize_cmd(cmd: str) -> str:
     """Normalize a command string for grounding comparison.
 
@@ -79,14 +113,22 @@ def normalize_cmd(cmd: str) -> str:
     trailing whitespace, drops trailing ``;``, and removes ``2>&1`` stderr
     merges (``cmd`` and ``cmd 2>&1`` are the same command for grounding —
     the agent frequently adds the merge, the distiller frequently drops it).
-    Case is preserved — commands are case-sensitive. Applied symmetrically
-    to both the candidate set and the queried command, so removal is safe.
+    Each chain segment is then canonicalized (see :func:`_canonicalize_segment`)
+    so a proven-but-drifted command — absolute exe path, ``python3``, or a
+    ``--break-system-packages`` pip flag — still grounds. Case is preserved —
+    commands are case-sensitive. Applied symmetrically to both the candidate
+    set and the queried command, so every transform here is safe.
     """
     s = re.sub(r"\s+", " ", cmd).strip()
     s = s.replace(" 2>&1", "")
     while s.endswith(";"):
         s = s[:-1].rstrip()
-    return s
+    # Preserve the && / ; separators so chained commands still split the same.
+    parts = re.split(f"({_CHAIN_SPLIT_RE.pattern})", s)
+    return "".join(
+        p if _CHAIN_SPLIT_RE.fullmatch(p) else _canonicalize_segment(p)
+        for p in parts
+    )
 
 
 def _strip_env_prefix(cmd: str) -> str:
@@ -447,14 +489,20 @@ def write_commands_sh(out: DistillOutput, run_dir: Path, plan: Plan, repo_url: s
     return script_path
 
 
-def write_tape(tape: list[TapeCommand], run_dir: Path) -> Path:
+def write_tape(tape: list[TapeCommand], run_dir: Path, seed_worktree: bool = False) -> Path:
     """Render demo.tape from TapeCommands.
 
-    The tape runs in the stock VHS image against the *verified worktree*
-    exported by the verifier (run_dir/worktree, mounted at /vhs/worktree), so
-    the template opens with a hidden ``cd worktree``. Sleeps are the pacing
-    mechanism (see template note on Wait+Screen) and are clamped to a floor so
-    viewers can read each command's output.
+    The render runs in the base image with run_dir mounted at /vhs, and the
+    tape session starts in an empty /work. A guide that fetches the code
+    (``git clone`` / ``curl … | tar``) populates /work on camera. But a guide
+    that assumes the checkout is already present — e.g. a repo's OWN
+    step_by_step.md that opens with ``pip install -e .`` — would run in an empty
+    /work and fail ("not a Python project" → later steps "command not found").
+    ``seed_worktree=True`` makes the hidden preamble copy the verified worktree
+    (mounted at /vhs/worktree) into /work first, so those steps work.
+
+    Sleeps are the pacing mechanism (see template note on Wait+Screen) and are
+    clamped to a floor so viewers can read each command's output.
     """
     env = Environment(
         loader=FileSystemLoader(str(_TEMPLATES_DIR)),
@@ -469,7 +517,9 @@ def write_tape(tape: list[TapeCommand], run_dir: Path) -> Path:
         tc.model_copy(update={"sleep_after_s": max(tc.sleep_after_s, 2.0)})
         for tc in tape
     ]
-    tape_text = env.get_template("demo.tape.j2").render(tape=clamped)
+    tape_text = env.get_template("demo.tape.j2").render(
+        tape=clamped, seed_worktree=seed_worktree
+    )
     dest = run_dir / "demo.tape"
     dest.write_text(tape_text, encoding="utf-8")
     return dest
@@ -559,6 +609,26 @@ def tape_from_guide(
     distiller's own tape.
     """
     script_set = {normalize_cmd(c) for c in script_commands}
+    # The agent frequently runs a guide's command in a sandbox-drifted but
+    # equivalent form: `python3` (not `python`), an absolute exe path, or
+    # `pip install ... --break-system-packages`. The clean guide string FAILS
+    # on camera (e.g. bare `pip install` hits Debian's externally-managed
+    # error, so nothing installs and later steps report "packages not found");
+    # the drifted form is what actually worked. Map the normalized form -> the
+    # PROVEN command so the video types the variant that runs.
+    # Two passes so a WHOLE-command match wins over a segment match. The second
+    # pass maps each chain segment to its FULL proven command, so a guide step
+    # that the agent only ran as part of a chain (e.g. `export PATH=... &&
+    # readme2demo --help`) is typed WITH that chain — otherwise the bare command
+    # isn't on PATH on camera and records "command not found".
+    proven_by_norm: dict[str, str] = {}
+    for entry in log.successful_commands():
+        proven_by_norm.setdefault(normalize_cmd(entry.cmd), entry.cmd)
+    for entry in log.successful_commands():
+        for seg in _CHAIN_SPLIT_RE.split(normalize_cmd(entry.cmd)):
+            seg = seg.strip()
+            if seg:
+                proven_by_norm.setdefault(seg, entry.cmd)
     # Agents often wrap long-output commands in a capping pipe
     # (`cmd 2>&1 | head -20`). The guide says `cmd`; the log proves the piped
     # variant. Map first-pipe-segment -> full proven command so the step still
@@ -578,8 +648,12 @@ def tape_from_guide(
         is_repo_clone = bool(
             repo_url and norm.startswith("git clone") and repo_url in norm
         )
-        if is_repo_clone or is_grounded(cmd, log) or norm in script_set:
-            chosen = cmd
+        if is_repo_clone:
+            chosen = cmd  # harness clone — type the guide's own clone line
+        elif is_grounded(cmd, log) or norm in script_set:
+            # Prefer the exact command the agent proved; fall back to the
+            # guide's text when nothing drifted (they're then identical).
+            chosen = proven_by_norm.get(norm, cmd)
         elif norm in pipe_variants:
             chosen = pipe_variants[norm]
         else:
@@ -663,6 +737,23 @@ def distill(
     return out, cost
 
 
+def _tape_fetches_code(tape: list[TapeCommand]) -> bool:
+    """True if the tape itself puts the repo in the working dir.
+
+    A guide that clones or downloads+extracts the code populates the empty
+    /work on camera; a guide that assumes the checkout is already there (a
+    repo's own step_by_step.md) does not — the render seeds /work from the
+    verified worktree for the latter (see ``write_tape(seed_worktree=...)``).
+    """
+    for tc in tape:
+        c = tc.cmd.lower()
+        if "git clone" in c:
+            return True
+        if ("curl" in c or "wget" in c) and "tar" in c:
+            return True
+    return False
+
+
 def build_tape_from_step_by_step(
     run_dir: Path, log: CommandLog, repo_url: str, fallback: list[TapeCommand]
 ) -> dict:
@@ -694,5 +785,9 @@ def build_tape_from_step_by_step(
         )
         for c in dropped:
             Console().print(f"[yellow]    {c.splitlines()[0][:100]}[/]")
-    write_tape(tape if tape else fallback, run_dir)
+    final_tape = tape if tape else fallback
+    # A repo's own guide (no clone step) assumes the checkout is present; seed
+    # /work from the verified worktree so its `pip install -e .`/build steps
+    # aren't run in an empty directory.
+    write_tape(final_tape, run_dir, seed_worktree=not _tape_fetches_code(final_tape))
     return coverage

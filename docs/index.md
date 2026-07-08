@@ -9,7 +9,9 @@ The value is not "AI writes a tutorial." It is that the tutorial **ran, twice**,
 in throwaway containers before you ever saw it. Nothing is published that a
 fresh container did not independently execute.
 
-[![readme2demo verified demo](https://raw.githubusercontent.com/alphacrack/readme2demo/main/examples/toolhive/demo.gif)](https://github.com/alphacrack/readme2demo/tree/main/examples/toolhive)
+![readme2demo running on its own repo — verified demo](demo.gif)
+
+<small>readme2demo generating its own tutorial and demo — every step replayed in a fresh container first. See it run against another project in the [ToolHive example](https://github.com/alphacrack/readme2demo/tree/main/examples/toolhive).</small>
 
 ## Install
 

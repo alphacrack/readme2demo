@@ -1,0 +1,77 @@
+name: release
+
+# Cutting a release is now: bump the version + CHANGELOG, commit, then push a
+# `vX.Y.Z` tag. This workflow (triggered by that tag) builds the package and
+# publishes a GitHub Release with the notes pulled from CHANGELOG.md.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build            # sdist + wheel -> dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write                   # needed to create the release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Extract this version's CHANGELOG section
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          awk -v v="$VER" '
+            index($0, "## [" v "]") == 1 { f=1; next }
+            f && /^## \[/ { exit }
+            f { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          [ -s RELEASE_NOTES.md ] || echo "See CHANGELOG.md" > RELEASE_NOTES.md
+      - name: Create GitHub Release (attaches the built wheel + sdist)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file RELEASE_NOTES.md \
+            --latest \
+            dist/*
+
+  # ─── PyPI publish ── uncomment AFTER you set up Trusted Publishing on PyPI ───
+  # 1. Reserve the name / create the project on https://pypi.org
+  # 2. Project → Publishing → add a GitHub publisher:
+  #      owner: alphacrack   repo: readme2demo
+  #      workflow: release.yml   environment: pypi
+  # 3. Uncomment this job. No API token/secret needed (OIDC).
+  #
+  # pypi:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   environment: pypi
+  #   permissions:
+  #     id-token: write
+  #   steps:
+  #     - uses: actions/download-artifact@v4
+  #       with:
+  #         name: dist
+  #         path: dist/
+  #     - uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,0 +1,77 @@
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Getting Started with readme2demo: Install, Test, and Explore",
+  "description": "readme2demo turns a project's README into a verified tutorial and demo video: an AI agent runs the quickstart in a sandbox, a fresh container replays every step, and only verified results get published. Every command verified in a clean container.",
+  "datePublished": "2026-07-05",
+  "isBasedOn": "https://github.com/alphacrack/readme2demo",
+  "tool": [
+    {
+      "@type": "HowToTool",
+      "name": "python>=3.10"
+    },
+    {
+      "@type": "HowToTool",
+      "name": "pip"
+    },
+    {
+      "@type": "HowToTool",
+      "name": "git"
+    }
+  ],
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Install readme2demo with development dependencies",
+      "text": "This installs readme2demo in \"editable\" mode, meaning changes to the source code take effect immediately without reinstalling, along with the extra packages needed for development and testing. The --break-system-packages flag tells pip it's okay to install here even though the system considers this Python environment externally managed \u2014 safe to do in this disposable sandbox.",
+      "itemListElement": [
+        {
+          "@type": "HowToDirection",
+          "text": "pip install --break-system-packages -e \".[dev]\""
+        }
+      ]
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Run the test suite to confirm the install works",
+      "text": "This runs readme2demo's full suite of automated tests, which is a quick way to confirm your install is healthy before you rely on the tool. None of these tests need Docker or a network connection, so they finish almost instantly. We use python3 here because plain python isn't available in this environment.",
+      "itemListElement": [
+        {
+          "@type": "HowToDirection",
+          "text": "python3 -m pytest tests/ -q"
+        }
+      ]
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Explore the CLI's available commands",
+      "text": "This prints readme2demo's built-in help text, showing you the subcommands available (like run, resume, and report) along with global options. It's a good first stop any time you want a reminder of what the tool can do.",
+      "itemListElement": [
+        {
+          "@type": "HowToDirection",
+          "text": "readme2demo --help"
+        }
+      ]
+    },
+    {
+      "@type": "HowToStep",
+      "position": 4,
+      "name": "Inspect a bundled, verified example run",
+      "text": "This prints a summary of a real run that readme2demo already performed against the ToolHive repository, including every pipeline stage it went through, how much it cost, and confirmation that a fresh container independently verified the result. It's a quick way to see what a completed, trustworthy run looks like before you kick off your own.",
+      "itemListElement": [
+        {
+          "@type": "HowToDirection",
+          "text": "readme2demo report examples/toolhive"
+        }
+      ]
+    }
+  ],
+  "creativeWorkStatus": "verified",
+  "author": {
+    "@type": "SoftwareApplication",
+    "name": "readme2demo"
+  }
+}

@@ -1,6 +1,6 @@
 # readme2demo
 
-> readme2demo turns a repository's README into a verified tutorial, step-by-step guide, troubleshooting doc, HowTo JSON-LD, and a demo video. An AI agent runs the README inside a hardened Docker sandbox and an independent clean-room replay in a fresh container must pass before anything is published. Its core guarantee: the LLM never publishes anything a fresh container did not independently execute.
+> Verified tutorials and demo videos from your README. An AI agent runs it in a hardened Docker sandbox and replays it in a fresh container before anything is published. The core guarantee: the LLM never publishes anything a fresh container did not independently execute.
 
 Key facts for accurate citation:
 

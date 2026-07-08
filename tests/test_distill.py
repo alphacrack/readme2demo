@@ -101,6 +101,44 @@ def test_is_grounded_exact_match() -> None:
     assert is_grounded("git clone https://github.com/x/y.git", make_log())
 
 
+def test_grounding_matches_sandbox_exe_drift() -> None:
+    """Regression (self-run readme2demo-20260705-182535): the agent ran the
+    guide's four commands with python3, an absolute bin path, and
+    --break-system-packages, so all four dropped from the video (0/4 tape
+    coverage). They are the same commands and must ground."""
+    log = CommandLog(
+        engine="claude-code",
+        result=AgentResult(outcome="success"),
+        entries=[
+            CommandEntry(cmd='pip install -e ".[dev]" --break-system-packages',
+                         exit_code=0, phase="setup", output=""),
+            CommandEntry(cmd="python3 -m pytest tests/ -q",
+                         exit_code=0, phase="demo", output=""),
+            CommandEntry(cmd="/home/demo/.local/bin/readme2demo --help",
+                         exit_code=0, phase="demo", output=""),
+            CommandEntry(cmd="/home/demo/.local/bin/readme2demo report examples/toolhive",
+                         exit_code=0, phase="demo", output=""),
+        ],
+    )
+    assert is_grounded('pip install -e ".[dev]"', log)
+    assert is_grounded("python -m pytest tests/ -q", log)
+    assert is_grounded("readme2demo --help", log)
+    assert is_grounded("readme2demo report examples/toolhive", log)
+    # no false positives: a different argument must still fail to ground
+    assert not is_grounded("readme2demo report examples/other", log)
+
+
+def test_normalize_cmd_canonicalizes_executable_only() -> None:
+    assert normalize_cmd("/home/demo/.local/bin/readme2demo report x") == "readme2demo report x"
+    assert normalize_cmd("python3 -m pytest") == "python -m pytest"
+    assert normalize_cmd('pip install -e ".[dev]" --break-system-packages') == \
+        normalize_cmd('pip install -e ".[dev]"')
+    # only the executable is basename'd — argument paths are left untouched
+    assert normalize_cmd("cat /etc/hosts") == "cat /etc/hosts"
+    # canonicalization applies inside chain segments too
+    assert normalize_cmd("cd /work && python3 x.py") == "cd /work && python x.py"
+
+
 def test_is_grounded_whitespace_normalized_match() -> None:
     assert is_grounded("git  clone   https://github.com/x/y.git ;", make_log())
 
@@ -537,6 +575,77 @@ def test_tape_from_guide_allows_harness_clone():
     # but a clone of some OTHER repo is not allowed
     other = guide.replace("github.com/x/y", "github.com/evil/repo")
     assert tape_from_guide(other, _guide_log(), [], "https://github.com/x/y") == []
+
+
+def test_tape_types_proven_variant_for_sandbox_drift() -> None:
+    """Regression (self-run readme2demo-20260705-185220): the guide's clean
+    commands fail on camera — bare `pip install` hits Debian's
+    externally-managed error, so nothing installs and later steps report
+    'packages not found', and a bare exe isn't on PATH. The tape must type the
+    exact drifted command the agent proved, not the guide's clean form."""
+    log = CommandLog(
+        engine="claude-code",
+        result=AgentResult(outcome="success"),
+        entries=[
+            CommandEntry(cmd='pip install -e ".[dev]" --break-system-packages',
+                         exit_code=0, phase="setup", output=""),
+            CommandEntry(cmd="python3 -m pytest tests/ -q",
+                         exit_code=0, phase="demo", output=""),
+            CommandEntry(cmd="/home/demo/.local/bin/readme2demo --help",
+                         exit_code=0, phase="demo", output=""),
+        ],
+    )
+    guide = (
+        '## Install\n```bash\npip install -e ".[dev]"\n```\n'
+        "## Test\n```bash\npython -m pytest tests/ -q\n```\n"
+        "## CLI\n```bash\nreadme2demo --help\n```\n"
+    )
+    assert [tc.cmd for tc in distill.tape_from_guide(guide, log, [])] == [
+        'pip install -e ".[dev]" --break-system-packages',
+        "python3 -m pytest tests/ -q",
+        "/home/demo/.local/bin/readme2demo --help",
+    ]
+
+
+def test_tape_types_full_chain_when_step_ran_inside_one() -> None:
+    """Regression (self-run readme2demo-20260705-190830): the agent ran the CLI
+    steps as `export PATH=... && readme2demo ...`, so the guide's bare
+    `readme2demo --help` matched only the chain SEGMENT. Typing the bare command
+    records 'command not found' on camera (not on PATH); the tape must type the
+    whole proven chain, PATH export included."""
+    log = CommandLog(
+        engine="claude-code",
+        result=AgentResult(outcome="success"),
+        entries=[
+            CommandEntry(cmd='export PATH="$HOME/.local/bin:$PATH" && readme2demo --help',
+                         exit_code=0, phase="demo", output=""),
+        ],
+    )
+    guide = "## CLI\n```bash\nreadme2demo --help\n```\n"
+    assert [tc.cmd for tc in distill.tape_from_guide(guide, log, [])] == [
+        'export PATH="$HOME/.local/bin:$PATH" && readme2demo --help',
+    ]
+
+
+def test_write_tape_seeds_worktree_when_guide_has_no_fetch(tmp_path) -> None:
+    """Regression (self-run readme2demo-20260705-190830): a repo's own guide has
+    no clone step, so the render must seed /work from the verified worktree —
+    otherwise the first `pip install -e .` runs in an empty dir and every step
+    after fails ('not a Python project' / 'command not found')."""
+    tape = [TapeCommand(cmd='pip install -e ".[dev]"')]
+    seeded = distill.write_tape(tape, tmp_path, seed_worktree=True).read_text()
+    assert "cp -a /vhs/worktree/. /work/" in seeded
+    plain = distill.write_tape(tape, tmp_path, seed_worktree=False).read_text()
+    assert "cp -a /vhs/worktree" not in plain
+    assert 'Type "cd /work && clear"' in plain
+
+
+def test_tape_fetches_code_detection() -> None:
+    assert distill._tape_fetches_code([TapeCommand(cmd="git clone https://x/y .")])
+    assert distill._tape_fetches_code(
+        [TapeCommand(cmd="curl -sL https://x/y.tar.gz | tar xz")]
+    )
+    assert not distill._tape_fetches_code([TapeCommand(cmd='pip install -e ".[dev]"')])
 
 
 def test_tape_from_guide_ungrounded_command_skipped():

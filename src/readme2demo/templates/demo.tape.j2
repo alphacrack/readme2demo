@@ -29,7 +29,11 @@ Set Shell bash
 Set WaitTimeout 600s
 
 Hide
+{% if seed_worktree %}
+Type "cp -a /vhs/worktree/. /work/ 2>/dev/null || true; cd /work && clear"
+{% else %}
 Type "cd /work && clear"
+{% endif %}
 Enter
 Wait
 Show

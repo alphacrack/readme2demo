@@ -9,9 +9,9 @@
        ./scripts/self-demo.sh
      It runs readme2demo on this very repo, following docs/step-by-step.md,
      and drops the verified demo.gif in right here. -->
-[![readme2demo verified demo](examples/toolhive/demo.gif)](examples/toolhive/)
+[![readme2demo running on its own repo — verified demo](docs/demo.gif)](examples/readme2demo/)
 
-<sub>▶ A real, unedited readme2demo run on [ToolHive](examples/toolhive/) — every command was replayed in a clean container **before** this GIF was rendered.</sub>
+<sub>▶ readme2demo generating its own tutorial: an AI agent runs this repo's README in a sandbox, a fresh container replays every step, then the demo is rendered. Full self-run output in <a href="examples/readme2demo/">examples/readme2demo</a> · run against another project in <a href="examples/toolhive/">examples/toolhive</a>.</sub>
 <!-- HERO:END -->
 
 **AI-verified tutorial and demo video generator.** Point it at a repo. An AI agent reads the README and actually runs it inside a hardened Docker sandbox. Only after a clean-room replay passes does it render a demo video (VHS) and publish the tutorial, step-by-step guide, and troubleshooting doc.

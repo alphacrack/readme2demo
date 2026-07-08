@@ -15,7 +15,9 @@ when both are given, the guide is treated as authoritative and both are used.
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Optional
+from importlib.metadata import version as pkg_version, PackageNotFoundError
 
 import typer
 from rich.console import Console
@@ -31,6 +33,26 @@ app = typer.Typer(
 )
 console = Console()
 
+def _version_callback(value: bool) -> None:
+    if value:
+        try:
+            ver = pkg_version("readme2demo")
+        except PackageNotFoundError:
+            ver = "unknown"
+        console.print(ver)
+        raise typer.Exit()
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        None,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    pass
 
 def _build_config(
     config_file: Optional[Path],
@@ -179,9 +201,22 @@ def resume(
 @app.command()
 def report(
     run_dir: Path = typer.Argument(..., help="Path to a runs/<run-id> directory"),
+    json_output: bool = typer.Option(False, "--json", help="Emit summary as JSON"),
 ) -> None:
     """Print a summary of a run: stage statuses, verification, cost."""
     manifest = Manifest.load(run_dir)
+    if json_output:
+        output_data = {
+            "stages": [
+                {"name": name, "status": rec.status}
+                for name, rec in manifest.stages.items()
+            ],
+            "verified": manifest.verified,
+            "cost": manifest.total_cost_usd,
+            "commit": manifest.commit_sha,
+        }
+        print(json.dumps(output_data, indent=2))
+        raise typer.Exit(0)
     console.print(summarize(manifest))
 
 

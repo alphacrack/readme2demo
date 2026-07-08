@@ -1,8 +1,5 @@
 site_name: readme2demo
-site_description: >-
-  Verified tutorials and demo videos from a repo's README. An AI agent runs
-  your README inside a hardened Docker sandbox and independently replays it in
-  a fresh container before anything is published.
+site_description: "Verified tutorials and demo videos from your README. An AI agent runs it in a hardened Docker sandbox and replays it in a fresh container before anything is published."
 # Canonical URL for SEO/GEO. Change to your custom domain if you set one up
 # (and add a docs/CNAME file with that domain).
 site_url: https://alphacrack.github.io/readme2demo/

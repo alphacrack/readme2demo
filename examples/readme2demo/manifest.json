@@ -1,0 +1,91 @@
+{
+  "run_id": "readme2demo-20260705-193306-a5254a",
+  "repo_url": "https://github.com/alphacrack/readme2demo",
+  "commit_sha": "f677e211e3b435f326408b624309aa3e5377a69c",
+  "engine": "claude-code",
+  "base_image": "readme2demo/base:latest",
+  "created_at": "2026-07-05T19:33:06.910546+00:00",
+  "stages": {
+    "ingest": {
+      "status": "completed",
+      "started_at": "2026-07-05T19:33:06.912146+00:00",
+      "finished_at": "2026-07-05T19:33:18.295578+00:00",
+      "error": null,
+      "cost_usd": 0.1635673,
+      "meta": {
+        "feasible": true
+      }
+    },
+    "agent": {
+      "status": "completed",
+      "started_at": "2026-07-05T19:33:18.297541+00:00",
+      "finished_at": "2026-07-05T19:34:45.788402+00:00",
+      "error": null,
+      "cost_usd": 0.0,
+      "meta": {}
+    },
+    "normalize": {
+      "status": "completed",
+      "started_at": "2026-07-05T19:34:45.792865+00:00",
+      "finished_at": "2026-07-05T19:34:45.800796+00:00",
+      "error": null,
+      "cost_usd": 0.24882015000000002,
+      "meta": {
+        "outcome": "success",
+        "commands": 8,
+        "adjusted_success": null,
+        "source_modified": null,
+        "guide_steps_unattempted": [
+          "python -m pytest tests/ -q",
+          "readme2demo --help",
+          "readme2demo report examples/toolhive"
+        ]
+      }
+    },
+    "distill": {
+      "status": "completed",
+      "started_at": "2026-07-05T19:34:45.802346+00:00",
+      "finished_at": "2026-07-05T19:35:46.341259+00:00",
+      "error": null,
+      "cost_usd": 0.1782537,
+      "meta": {}
+    },
+    "verify": {
+      "status": "completed",
+      "started_at": "2026-07-05T19:35:46.342535+00:00",
+      "finished_at": "2026-07-05T19:35:58.522448+00:00",
+      "error": null,
+      "cost_usd": 0.0,
+      "meta": {
+        "attempts": 1,
+        "exit_code": 0
+      }
+    },
+    "tutorial": {
+      "status": "completed",
+      "started_at": "2026-07-05T19:35:58.526381+00:00",
+      "finished_at": "2026-07-05T19:36:39.458790+00:00",
+      "error": null,
+      "cost_usd": 0.1319437,
+      "meta": {
+        "step_by_step": "repo-provided"
+      }
+    },
+    "render": {
+      "status": "completed",
+      "started_at": "2026-07-05T19:36:39.460586+00:00",
+      "finished_at": "2026-07-05T19:38:02.436092+00:00",
+      "error": null,
+      "cost_usd": 0.0,
+      "meta": {
+        "artifacts": [
+          "demo.mp4",
+          "demo.gif"
+        ],
+        "tape_coverage": "4/4 guide steps"
+      }
+    }
+  },
+  "verified": true,
+  "total_cost_usd": 0.722585
+}
