@@ -59,7 +59,6 @@ def test_version_flag():
 
 def test_report_json_output(tmp_path, monkeypatch):
     import json
-    from readme2demo.manifest import Manifest
 
   
     manifest_data = {
