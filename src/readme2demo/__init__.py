@@ -5,4 +5,4 @@ after a clean-room replay passes do we render the demo video and publish the
 tutorial.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.4.0"
