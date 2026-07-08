@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-06
+
+### Added
+- `readme2demo --version` flag that prints the installed version and exits
+  (#10, thanks @adjenk).
+
 ## [0.2.0] — 2026-07-05
 
 ### Added
@@ -56,6 +62,7 @@ Initial public release.
   `commands.sh`, `demo.tape`, `demo.mp4`, `demo.gif`, and `howto.jsonld`.
 - Verified `examples/toolhive/` reference run committed as proof.
 
-[Unreleased]: https://github.com/alphacrack/readme2demo/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/alphacrack/readme2demo/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.3.0
 [0.2.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.2.0
 [0.1.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.1.0

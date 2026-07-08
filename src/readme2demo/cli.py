@@ -15,6 +15,7 @@ when both are given, the guide is treated as authoritative and both are used.
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Optional
 from importlib.metadata import version as pkg_version, PackageNotFoundError
 
@@ -200,9 +201,22 @@ def resume(
 @app.command()
 def report(
     run_dir: Path = typer.Argument(..., help="Path to a runs/<run-id> directory"),
+    json_output: bool = typer.Option(False, "--json", help="Emit summary as JSON"),
 ) -> None:
     """Print a summary of a run: stage statuses, verification, cost."""
     manifest = Manifest.load(run_dir)
+    if json_output:
+        output_data = {
+            "stages": [
+                {"name": name, "status": rec.status}
+                for name, rec in manifest.stages.items()
+            ],
+            "verified": manifest.verified,
+            "cost": manifest.total_cost_usd,
+            "commit": manifest.commit_sha,
+        }
+        print(json.dumps(output_data, indent=2))
+        raise typer.Exit(0)
     console.print(summarize(manifest))
 
 
