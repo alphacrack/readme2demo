@@ -201,7 +201,7 @@ def resume(
 @app.command()
 def report(
     run_dir: Path = typer.Argument(..., help="Path to a runs/<run-id> directory"),
-   json_output: bool = typer.Option(False, "--json", help="Emit summary as JSON"),
+    json_output: bool = typer.Option(False, "--json", help="Emit summary as JSON"),
 ) -> None:
     """Print a summary of a run: stage statuses, verification, cost."""
     manifest = Manifest.load(run_dir)
