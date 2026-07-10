@@ -28,8 +28,11 @@ provide both. At least one is required.
 |---|---|
 | `-gr`, `--github-repo` | Repo URL (optional; same as the positional argument). |
 | `-s`, `--step-by-step` | Your own guide; becomes the authoritative source and the video's script. |
-| `--llm-backend` | `auto` \| `api` \| `claude-cli` for the planner/distiller/tutorial passes. |
+| `--llm-backend` | `auto` \| `api` \| `claude-cli` \| `gemini` \| `openai` for the planner/distiller/tutorial passes. |
 | `--engine` | `claude-code` (default) or `openhands` (experimental). |
+| `--openai [model]` | Run the whole session on OpenAI via `OPENAI_API_KEY` (OpenHands agent + OpenAI passes). Bare flag reads `--model` / `OPENAI_MODEL`. |
+| `--gemini [model]` | Run the whole session on Google Gemini via `GEMINI_API_KEY` (OpenHands agent + Gemini passes). Bare flag reads `--model` / `GEMINI_MODEL`. |
+| `--anthropic [model]` | Run the sandboxed agent on OpenHands with a Claude model via `ANTHROPIC_API_KEY`. |
 | `--budget-usd` | Abort the run if the agent's cost exceeds this. |
 | `--skip-video` / `--with-video` | Skip or force VHS rendering. |
 | `--allow-docker-socket` | Mount the host Docker socket into the sandbox. Security tradeoff — trusted repos only. |

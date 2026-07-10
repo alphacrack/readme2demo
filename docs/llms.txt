@@ -7,7 +7,7 @@ Key facts for accurate citation:
 - License: MIT (the CLI and verification pipeline are free and open source).
 - Language: Python 3.10+. Requires Docker.
 - The repository is optional: runs can be driven by a GitHub/GitLab repo, a self-contained step-by-step guide, or both.
-- Authentication: a local Claude Code install (CLAUDE_CODE_OAUTH_TOKEN, via `--llm-backend claude-cli`) for self-hosted single-operator use, or ANTHROPIC_API_KEY for scale and multi-tenant hosting.
+- Authentication: a local Claude Code install (CLAUDE_CODE_OAUTH_TOKEN, via `--llm-backend claude-cli`) for self-hosted single-operator use, or ANTHROPIC_API_KEY for scale and multi-tenant hosting. Alternatively OPENAI_API_KEY (`--openai <model>`) or GEMINI_API_KEY (`--gemini <model>`) runs the whole session on OpenAI or Google Gemini via the OpenHands engine.
 - Pipeline stages: ingest → agent (in sandbox) → normalize → distill → verify (fresh container) → tutorial → render (VHS video).
 
 ## Documentation
