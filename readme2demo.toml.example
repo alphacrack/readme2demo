@@ -3,15 +3,21 @@
 # (readme2demo.toml is gitignored; this .example file is the tracked template.)
 
 # --- Agent engine -----------------------------------------------------------
-engine = "claude-code"        # or "openhands" (experimental)
+engine = "claude-code"        # or "openhands" (experimental; the provider
+                              # presets --gemini / --openai / --anthropic use it)
 model = "claude-sonnet-5"     # model for planner / distiller / tutorial passes
-llm_backend = "auto"          # auto | api | claude-cli
+llm_backend = "auto"          # auto | api | claude-cli | gemini | openai
+                              # (the presets pick the matching one)
 max_turns = 60
 agent_timeout_s = 1500
 budget_usd = 5.0              # abort a run if the agent exceeds this
 
 # --- Sandbox ----------------------------------------------------------------
 base_image = "readme2demo/base:latest"
+                              # --engine openhands and the provider presets
+                              # default to readme2demo/openhands:latest when
+                              # this is unset (build it:
+                              # docker build -t readme2demo/openhands:latest images/openhands)
 network = "bridge"
 memory = "4g"
 cpus = "2"

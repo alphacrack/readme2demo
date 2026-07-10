@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from rich.console import Console
+from rich.markup import escape
 
 from readme2demo import distill as distill_mod
 from readme2demo import ingest as ingest_mod
@@ -125,13 +126,18 @@ class Orchestrator:
             plan.success_criteria.description += " (adjusted by agent — see FIX notes)"
             adjusted = log.adjusted_success_command
             plan_dirty = True
-            console.print(f"[yellow]Success command adjusted by agent:[/] {adjusted}")
+            # escape(): shell commands often contain [ -f x ]-style brackets
+            # that Rich would parse as markup and swallow.
+            console.print(
+                f"[yellow]Success command adjusted by agent:[/] {escape(adjusted)}"
+            )
         # Reality-check the (LLM-authored) expected pattern against captured
         # output — a wrong pattern would fail the verify of a working build.
         pattern_changed, reason = normalize_mod.validate_success_pattern(plan, log)
         if pattern_changed:
             plan_dirty = True
-            console.print(f"[yellow]Success pattern corrected:[/] {reason}")
+            # escape(): the reason quotes regexes ([0-9]+ etc.) — see above.
+            console.print(f"[yellow]Success pattern corrected:[/] {escape(reason)}")
         if plan_dirty:
             (self.run_dir / "plan.json").write_text(plan.model_dump_json(indent=2))
         # Findings tools: a nonzero-exit demo command whose output matches the
@@ -153,7 +159,7 @@ class Orchestrator:
         if edited:
             console.print(
                 "[red]⚠ Agent modified repo source files (verification will "
-                "not reproduce this):[/] " + ", ".join(edited[:5])
+                "not reproduce this):[/] " + escape(", ".join(edited[:5]))
             )
         # Guide mode: every step must at least have been ATTEMPTED. An
         # unattempted step can never be grounded, so it silently vanishes from
@@ -182,7 +188,7 @@ class Orchestrator:
                         "step(s) — they cannot appear in the video:[/]"
                     )
                     for c in unattempted:
-                        console.print(f"[red]    {c[:100]}[/]")
+                        console.print(f"[red]    {escape(c[:100])}[/]")
         cost = log.result.cost_usd or 0.0
         self.manifest.stage_complete(
             "normalize",
@@ -316,7 +322,7 @@ class Orchestrator:
             "tutorial": self._stage_tutorial,
         }
         while (stage := self.manifest.next_stage()) is not None:
-            console.print(f"[bold cyan]▶ {stage}[/] ({self.run_dir.name})")
+            console.print(f"[bold cyan]▶ {stage}[/] ({escape(self.run_dir.name)})")
             self.manifest.stage_start(stage)
             try:
                 handlers[stage]()

@@ -46,6 +46,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-mock>=3.14", "ruff>=0.6"]
 docs = ["mkdocs-material>=9.5", "mkdocs-minify-plugin>=0.8"]
+# Google Gemini backend for the planner/distiller/tutorial passes (--gemini).
+gemini = ["google-genai>=1.0"]
+# OpenAI backend for the planner/distiller/tutorial passes (--openai).
+openai = ["openai>=1.50"]
 
 [project.urls]
 Homepage = "https://github.com/alphacrack/readme2demo"
