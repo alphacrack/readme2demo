@@ -27,3 +27,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Launch / go-to-market material — internal, never shipped
+launch/
