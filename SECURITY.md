@@ -23,7 +23,10 @@ These are real limitations of the current release. We would rather name them
 than let you discover them.
 
 - **The API key enters the sandbox.** In the current design, the agent needs
-  model credentials inside the container. A malicious repo that fully
+  model credentials inside the container — whichever provider you run on
+  (`ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN`, or `OPENAI_API_KEY` /
+  `GEMINI_API_KEY` via the litellm-style `LLM_API_KEY` with the provider
+  presets). A malicious repo that fully
   compromises the agent could read them. **Mitigation: use a dedicated,
   low-limit API key for runs — never your primary key.** A host-side,
   key-injecting egress proxy that keeps credentials out of the sandbox is on

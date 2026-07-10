@@ -35,7 +35,10 @@ crash-safe `manifest.json`; every stage resumable via
 Prompts live in `src/readme2demo/prompts/*.md`; jinja templates in
 `src/readme2demo/templates/`. Engines are plugins (`engines/base.py`):
 `claude-code` (default), `openhands` (experimental) — both normalize to the
-same `command_log.json`; downstream never knows which agent ran.
+same `command_log.json`; downstream never knows which agent ran. Provider
+presets (`--gemini` / `--openai` / `--anthropic`, table `llm.PROVIDERS`) pair
+the OpenHands engine with the matching LLM backend off one API key; no flags
+still means claude-code on the operator's Claude subscription.
 
 ## Dev loop
 
@@ -109,6 +112,34 @@ Each was found on a real run; each has code defenses and a regression test.
     the assertion. `distill._tolerate_findings_steps` appends `|| true` to
     steps the log marked `findings_success`. Related to class 4 (same tool,
     different location).
+14. **Engine runtime missing from the sandbox image** — `--engine openhands`
+    against the base image dies with a bare exit 127 and no transcript (no
+    OpenHands, no `python` alias). OpenHands gets its own image
+    (`images/openhands/`, pinned 0.x — bump with the parser like the Claude
+    Code pin); engines carry `default_image` (auto-selected when base_image is
+    unset) and `check_image` (preflight probe with build instructions). The
+    engine command sets `RUNTIME=local` and captures output to `agent.stderr`.
+15. **Optional SDK missing + Rich eats the fix** — a `--openai` run without
+    the `openai` package passed preflight, burned ingest on an ImportError,
+    AND the printed hint lost its `[openai]` extra to Rich markup parsing
+    (`pip install 'readme2demo'` — subtly wrong advice). Defenses:
+    `llm.check_sdk` (preflight gate, single message source shared with the
+    call-time check; distinguishes absent vs broken vs too-old SDK),
+    `llm.check_model` (bare `--llm-backend gemini/openai` with no model
+    named anywhere fails preflight too), and `rich.markup.escape()` on ALL
+    dynamic console text — errors, summaries, agent commands (`[ -f x ]`),
+    regexes (`[0-9]+`). Any new `console.print` interpolating non-literal
+    text must escape it; escape AFTER repr, never before.
+16. **Prompt echo scanned as agent output** — OpenHands writes the TASK
+    PROMPT into the trajectory as a `source:"user"` message action; scanning
+    it harvested the prompt's own marker documentation (`BLOCKED: <reason>`,
+    `ADJUSTED_SUCCESS: <new command>`, the literal R2D_SUCCESS example) as
+    real markers — a run whose agent genuinely printed R2D_SUCCESS was
+    reported blocked, and plan.json's success command was overwritten with
+    `<new command>`. Defenses: the OpenHands parser skips user-sourced
+    messages, and the shared scanners (`claude_code._is_placeholder`) reject
+    captures that are one whole un-filled `<...>` token — protecting
+    claude-code too when a model restates its instructions verbatim.
 
 ## The maintenance meta-workflow (how every fix above happened)
 
