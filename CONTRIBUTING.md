@@ -18,8 +18,10 @@ python -m pytest tests/ -q        # fast: no docker, network, or API keys needed
 docker build -t readme2demo/base:latest images/base/   # needed for real runs
 ```
 
-A real end-to-end run needs Docker plus either `ANTHROPIC_API_KEY` or a local
-Claude Code install (`--llm-backend claude-cli` + `CLAUDE_CODE_OAUTH_TOKEN`).
+A real end-to-end run needs Docker plus one model credential: a local Claude
+Code install (`--llm-backend claude-cli` + `CLAUDE_CODE_OAUTH_TOKEN`), an
+`ANTHROPIC_API_KEY`, an `OPENAI_API_KEY` (`--openai <model>`), or a
+`GEMINI_API_KEY` (`--gemini <model>`).
 
 ## Layout
 

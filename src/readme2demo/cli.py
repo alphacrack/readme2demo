@@ -14,33 +14,79 @@ when both are given, the guide is treated as authoritative and both are used.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 import json
 from typing import Optional
-from importlib.metadata import version as pkg_version, PackageNotFoundError
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from readme2demo.config import Config
 from readme2demo.manifest import STAGES, Manifest
 from readme2demo.orchestrator import Orchestrator, PipelineError, summarize
+from readme2demo import __version__ as version
 
-app = typer.Typer(
+
+# Sentinel value the argv normalizer injects after a bare provider preset flag
+# (`--gemini` / `--openai` / `--anthropic`), meaning "no model named here —
+# resolve from --model / the provider's model env var".
+PRESET_MODEL_UNSET = "__preset-model-unset__"
+
+
+def _normalize_preset_argv(args: list[str]) -> list[str]:
+    """Give the provider preset flags an optional value.
+
+    Click supports optional-value options natively (``flag_value``), but typer
+    drops that setting when building the click command, so a plain
+    ``--gemini`` (or ``--openai`` / ``--anthropic``) would swallow the next
+    token as its value. This pure pre-parser makes both spellings work: after
+    a bare preset flag whose next token is missing, another flag, or doesn't
+    look like one of that provider's model names (per
+    ``ProviderSpec.model_prefixes``), the :data:`PRESET_MODEL_UNSET` sentinel
+    is injected. For a model name outside those prefixes (e.g. a tuned model),
+    use the explicit ``--gemini=<name>`` form, which is never rewritten.
+    """
+    from readme2demo.llm import PROVIDERS
+
+    out: list[str] = []
+    for i, arg in enumerate(args):
+        out.append(arg)
+        spec = PROVIDERS.get(arg[2:]) if arg.startswith("--") else None
+        if spec is not None:
+            nxt = args[i + 1] if i + 1 < len(args) else None
+            if nxt is None or not nxt.startswith(spec.model_prefixes):
+                out.append(PRESET_MODEL_UNSET)
+    return out
+
+
+class _OptionalPresetValueTyper(typer.Typer):
+    """Typer app that normalizes argv so ``--gemini [MODEL]`` etc. work.
+
+    Applies only to the real CLI entry points (console script and
+    ``python -m``); typer's CliRunner bypasses ``__call__``, so tests exercise
+    :func:`_normalize_preset_argv` directly.
+    """
+
+    def __call__(self, *args, **kwargs):
+        sys.argv = [sys.argv[0], *_normalize_preset_argv(sys.argv[1:])]
+        return super().__call__(*args, **kwargs)
+
+
+app = _OptionalPresetValueTyper(
     name="readme2demo",
     help="Verified tutorial + demo video generation from a repo's README.",
     no_args_is_help=True,
 )
 console = Console()
 
+
 def _version_callback(value: bool) -> None:
     if value:
-        try:
-            ver = pkg_version("readme2demo")
-        except PackageNotFoundError:
-            ver = "unknown"
-        console.print(ver)
+        console.print(version)
         raise typer.Exit()
+
 
 @app.callback()
 def main(
@@ -53,6 +99,7 @@ def main(
     ),
 ) -> None:
     pass
+
 
 def _build_config(
     config_file: Optional[Path],
@@ -107,6 +154,117 @@ def _resolve_repo(
     return repo
 
 
+def _select_preset(
+    gemini: Optional[str],
+    openai: Optional[str],
+    anthropic: Optional[str],
+) -> Optional[tuple[str, Optional[str]]]:
+    """Reconcile the mutually exclusive provider preset flags.
+
+    Returns ``(provider, model)`` for the one preset given (``model`` is None
+    for a bare flag — the :data:`PRESET_MODEL_UNSET` sentinel is unwrapped
+    here), ``None`` when no preset was given, and raises
+    ``typer.BadParameter`` when more than one preset is on the command line.
+    """
+    chosen = {
+        name: value
+        for name, value in (
+            ("gemini", gemini), ("openai", openai), ("anthropic", anthropic)
+        )
+        if value is not None
+    }
+    if len(chosen) > 1:
+        flags = ", ".join(f"--{name}" for name in chosen)
+        raise typer.BadParameter(
+            f"Provider presets are mutually exclusive, but {flags} were all "
+            f"given. Pick one."
+        )
+    if not chosen:
+        return None
+    ((name, value),) = chosen.items()
+    return name, (None if value == PRESET_MODEL_UNSET else value)
+
+
+def _apply_provider(
+    provider: str,
+    engine: Optional[str],
+    model: Optional[str],
+    llm_backend: Optional[str],
+    preset_model: Optional[str] = None,
+) -> tuple[str, str, str]:
+    """Resolve a provider preset: OpenHands engine + that provider everywhere.
+
+    Returns the concrete ``(engine, model, llm_backend)`` for this run and
+    bridges the provider's API key into the OpenHands engine's env (see
+    :func:`llm.apply_provider_session`). The model comes from ``preset_model``
+    (the ``--<provider> <model>`` value), else ``model`` (``--model``), else
+    the provider's model env var — hardcoded fallbacks only where the spec
+    allows one (Anthropic). Raises ``typer.BadParameter`` for flags that
+    contradict the preset, so a stray ``--engine claude-code`` or a mismatched
+    ``--llm-backend`` fails loudly instead of being silently overridden.
+    """
+    from readme2demo import llm
+
+    spec = llm.PROVIDERS[provider]
+    flag = f"--{provider}"
+    if llm_backend not in (None, spec.backend):
+        raise typer.BadParameter(
+            f"{flag} implies --llm-backend {spec.backend}, but --llm-backend "
+            f"{llm_backend!r} was also given. Drop one of them."
+        )
+    if engine not in (None, "openhands"):
+        raise typer.BadParameter(
+            f"{flag} runs the agent on the OpenHands engine, but --engine "
+            f"{engine!r} was also given. Drop --engine or drop {flag}."
+        )
+    if (
+        preset_model
+        and model
+        and model.removeprefix(f"{spec.litellm_prefix}/").startswith(spec.model_prefixes)
+        and preset_model != model
+    ):
+        raise typer.BadParameter(
+            f"{spec.title} model given twice and they differ: {flag} "
+            f"{preset_model!r} vs --model {model!r}. Pass the model only once."
+        )
+    try:
+        resolved_model = llm.apply_provider_session(provider, preset_model or model)
+    except llm.LLMError as e:
+        raise typer.BadParameter(str(e)) from None
+    return "openhands", resolved_model, spec.backend
+
+
+def _announce_preset(provider: str, model: str) -> None:
+    from readme2demo.llm import PROVIDERS
+
+    spec = PROVIDERS[provider]
+    console.print(
+        f"[dim]--{provider}: engine=openhands, model={model}, "
+        f"LLM backend={spec.backend} (auth via {spec.key_env}).[/]"
+    )
+
+
+def _apply_engine_image(cfg: Config) -> Config:
+    """Give the run the engine's own sandbox image when none was chosen.
+
+    OpenHands needs its runtime baked into the image (readme2demo/openhands),
+    while the standard base image serves claude-code. Applies only when
+    base_image was set nowhere (neither CLI flag nor toml) — an explicit
+    choice always wins. Unknown engine names pass through untouched; preflight
+    reports them with the full list of valid engines.
+    """
+    from readme2demo.engines import get_engine
+    from readme2demo.engines.base import EngineError
+
+    try:
+        engine = get_engine(cfg.engine)
+    except EngineError:
+        return cfg
+    if engine.default_image and "base_image" not in cfg.model_fields_set:
+        return cfg.model_copy(update={"base_image": engine.default_image})
+    return cfg
+
+
 @app.command()
 def run(
     repo_url: Optional[str] = typer.Argument(
@@ -142,8 +300,39 @@ def run(
     llm_backend: Optional[str] = typer.Option(
         None, "--llm-backend",
         help="LLM backend for planner/distiller/tutorial passes: "
-             "auto | api | claude-cli (host `claude -p` on your subscription; "
-             "self-hosted runs — use api to host for other users)",
+             "auto | api | claude-cli | gemini | openai (claude-cli = host "
+             "`claude -p` on your subscription; self-hosted runs — use api to "
+             "host for other users)",
+    ),
+    gemini: Optional[str] = typer.Option(
+        None, "--gemini",
+        help="Run this session entirely on Google Gemini: the OpenHands engine "
+             "drives the sandboxed agent and the planner/distiller/tutorial "
+             "passes use Gemini, all via GEMINI_API_KEY. Takes an optional "
+             "model name (`--gemini gemini-3.5-flash`); bare `--gemini` uses "
+             "--model if it names a Gemini model, else the GEMINI_MODEL env "
+             "var. No model name is built in — one of those must name it. For "
+             "a model name not starting with 'gemini', use `--gemini=<name>`.",
+    ),
+    openai: Optional[str] = typer.Option(
+        None, "--openai",
+        help="Run this session entirely on OpenAI: the OpenHands engine drives "
+             "the sandboxed agent and the planner/distiller/tutorial passes "
+             "use OpenAI, all via OPENAI_API_KEY. Takes an optional model name "
+             "(`--openai gpt-5.1`); bare `--openai` uses --model if it names "
+             "an OpenAI model, else the OPENAI_MODEL env var. No model name is "
+             "built in — one of those must name it. For a model name outside "
+             "the gpt/o/chatgpt prefixes, use `--openai=<name>`.",
+    ),
+    anthropic: Optional[str] = typer.Option(
+        None, "--anthropic",
+        help="Run the sandboxed agent on the OpenHands engine with a Claude "
+             "model, and the planner/distiller/tutorial passes on the "
+             "Anthropic API, all via ANTHROPIC_API_KEY (metered billing — the "
+             "default no-flag setup uses the claude-code engine on your "
+             "subscription instead). Takes an optional model name; bare "
+             "`--anthropic` uses --model, else the ANTHROPIC_MODEL env var, "
+             "else the config default.",
     ),
     config_file: Optional[Path] = typer.Option(None, "--config", help="readme2demo.toml path"),
     # 1. ΠΡΟΣΘΗΚΗ ΕΔΩ: Δηλώνουμε το option στο Typer
@@ -154,6 +343,13 @@ def run(
 ) -> None:
     """Run the full pipeline against a repository, a step-by-step guide, or both."""
     repo_url = _resolve_repo(repo_url, github_repo, step_by_step)
+    preset = _select_preset(gemini, openai, anthropic)
+    if preset is not None:
+        provider, preset_model = preset
+        engine, model, llm_backend = _apply_provider(
+            provider, engine, model, llm_backend, preset_model
+        )
+        _announce_preset(provider, model)
     cfg = _build_config(
         config_file, engine, model, output_dir, timeout,
         budget_usd, max_turns, skip_video, base_image, llm_backend,
@@ -177,6 +373,7 @@ def run(
             "into the sandbox. This pierces isolation — a malicious repo "
             "could control your Docker host. Only for repos you trust.[/]"
         )
+    cfg = _apply_engine_image(cfg)
     _preflight(cfg)
     orch = Orchestrator.new_run(repo_url, cfg)
     _drive(orch)
@@ -189,20 +386,60 @@ def resume(
         None, "--from-stage", help=f"Re-run from this stage: {', '.join(STAGES)}"
     ),
     llm_backend: Optional[str] = typer.Option(None, "--llm-backend"),
+    gemini: Optional[str] = typer.Option(
+        None, "--gemini",
+        help="Resume on Google Gemini (OpenHands engine + Gemini passes, via "
+             "GEMINI_API_KEY). Takes an optional model name; bare `--gemini` "
+             "uses the config model if it names a Gemini model, else the "
+             "GEMINI_MODEL env var. See `readme2demo run --help`.",
+    ),
+    openai: Optional[str] = typer.Option(
+        None, "--openai",
+        help="Resume on OpenAI (OpenHands engine + OpenAI passes, via "
+             "OPENAI_API_KEY). Takes an optional model name; bare `--openai` "
+             "uses the config model if it names an OpenAI model, else the "
+             "OPENAI_MODEL env var. See `readme2demo run --help`.",
+    ),
+    anthropic: Optional[str] = typer.Option(
+        None, "--anthropic",
+        help="Resume on the Anthropic API (OpenHands engine + api passes, via "
+             "ANTHROPIC_API_KEY). Takes an optional model name; bare "
+             "`--anthropic` uses the config model, else ANTHROPIC_MODEL, else "
+             "the config default. See `readme2demo run --help`.",
+    ),
     allow_docker_socket: bool = typer.Option(False, "--allow-docker-socket"),
     config_file: Optional[Path] = typer.Option(None, "--config"),
 ) -> None:
     """Resume an interrupted run (optionally re-running from a given stage)."""
     if from_stage and from_stage not in STAGES:
-        console.print(f"[red]Unknown stage {from_stage!r}. Stages: {', '.join(STAGES)}[/]")
+        # escape AFTER repr — the other order re-breaks the markup (repr
+        # doubles escape()'s backslashes, reviving the swallowed tag).
+        console.print(
+            f"[red]Unknown stage {escape(repr(from_stage))}. "
+            f"Stages: {', '.join(STAGES)}[/]"
+        )
         raise typer.Exit(2)
+    preset = _select_preset(gemini, openai, anthropic)
     cfg = Config.load(toml_path=config_file, llm_backend=llm_backend)
+    if preset is not None:
+        provider, preset_model = preset
+        # Precedence: --<provider> <model> > config model (CLI beats toml) >
+        # the provider's model env var — passed as one value so the run-style
+        # two-flag conflict check doesn't fire against the toml model.
+        engine, resolved, backend = _apply_provider(
+            provider, None, preset_model or cfg.model, llm_backend
+        )
+        cfg = cfg.model_copy(
+            update={"engine": engine, "model": resolved, "llm_backend": backend}
+        )
+        _announce_preset(provider, resolved)
     if allow_docker_socket:
         cfg = cfg.model_copy(update={"allow_docker_socket": True})
         console.print(
             "[red]⚠ --allow-docker-socket: host Docker socket mounted into "
             "the sandbox — trusted repos only.[/]"
         )
+    cfg = _apply_engine_image(cfg)
     _preflight(cfg)
     orch = Orchestrator.resume(run_dir, cfg, from_stage=from_stage)
     _drive(orch)
@@ -224,7 +461,8 @@ def report(
         }
         print(json.dumps(output_data, indent=2))
         raise typer.Exit(0)
-    console.print(summarize(manifest))
+    # escape(): stage errors may contain [bracketed] text Rich would swallow.
+    console.print(escape(summarize(manifest)))
 
 
 def _preflight(cfg: Config) -> None:
@@ -238,10 +476,16 @@ def _preflight(cfg: Config) -> None:
 
     problems: list[str] = []
 
-    # LLM backend for the planner/distiller/tutorial passes.
-    llm.set_backend(cfg.llm_backend)
+    # LLM backend for the planner/distiller/tutorial passes. check_sdk and
+    # check_model make a missing/broken optional SDK or an unresolvable model
+    # a preflight error — a --openai run once burned its ingest stage on an
+    # ImportError instead. set_backend sits inside the try so a bad toml
+    # llm_backend is a clean ✗, not a traceback.
     try:
+        llm.set_backend(cfg.llm_backend)
         backend = llm.resolve_backend()
+        llm.check_sdk(backend)
+        llm.check_model(backend, cfg.model)
         console.print(f"[dim]LLM backend: {backend}[/]")
         if backend == "claude-cli":
             console.print(
@@ -254,9 +498,13 @@ def _preflight(cfg: Config) -> None:
     except LLMError as e:
         problems.append(str(e))
 
-    # Agent engine auth (forwarded into the sandbox).
+    # Agent engine auth (forwarded into the sandbox) + sandbox image probe:
+    # an image without the engine's runtime dies mid-run with a bare exit 127
+    # and no transcript, so it must be caught here, before agent time is spent.
     try:
-        get_engine(cfg.engine).resolve_env()
+        engine = get_engine(cfg.engine)
+        engine.resolve_env()
+        engine.check_image(cfg.base_image)
     except EngineError as e:
         problems.append(str(e))
 
@@ -265,35 +513,43 @@ def _preflight(cfg: Config) -> None:
 
     if problems:
         for p in problems:
-            console.print(f"[red]✗[/] {p}")
+            # escape(): problem text may contain [bracketed] content (e.g.
+            # "pip install 'readme2demo[openai]'") that Rich would otherwise
+            # parse as markup and silently swallow.
+            console.print(f"[red]✗[/] {escape(p)}")
         raise typer.Exit(2)
 
 
 def _drive(orch: Orchestrator) -> None:
+    # escape(): error and summary text carries arbitrary content ("pip install
+    # 'readme2demo[openai]'", shell snippets like `[ -f x ]`) that Rich would
+    # otherwise parse as markup and silently swallow.
     try:
         manifest = orch.run()
     except PipelineError as e:
-        console.print(f"[red]Pipeline stopped:[/] {e}")
-        console.print(summarize(orch.manifest))
+        console.print(f"[red]Pipeline stopped:[/] {escape(str(e))}")
+        console.print(escape(summarize(orch.manifest)))
         raise typer.Exit(1)
     except Exception as e:  # noqa: BLE001 — stage errors are already in the manifest
-        console.print(f"[red]{type(e).__name__}:[/] {e}")
-        console.print(summarize(orch.manifest))
+        console.print(f"[red]{type(e).__name__}:[/] {escape(str(e))}")
+        console.print(escape(summarize(orch.manifest)))
         console.print(
-            f"[dim]Fix the cause, then: readme2demo resume {orch.run_dir}[/]"
+            f"[dim]Fix the cause, then: readme2demo resume {escape(str(orch.run_dir))}[/]"
         )
         raise typer.Exit(1)
     console.print()
-    console.print(summarize(manifest))
+    console.print(escape(summarize(manifest)))
     if manifest.verified:
         console.print(
-            f"\n[bold green]✅ Verified.[/] Artifacts in [bold]{orch.run_dir}[/]: "
+            f"\n[bold green]✅ Verified.[/] Artifacts in "
+            f"[bold]{escape(str(orch.run_dir))}[/]: "
             "tutorial.md, commands.sh, demo.tape"
             + ("" if orch.cfg.skip_video else ", demo.mp4, demo.gif")
         )
     else:
         console.print(
-            f"\n[bold yellow]⚠ Completed UNVERIFIED.[/] See {orch.run_dir}/verify.log"
+            f"\n[bold yellow]⚠ Completed UNVERIFIED.[/] "
+            f"See {escape(str(orch.run_dir))}/verify.log"
         )
 
 
