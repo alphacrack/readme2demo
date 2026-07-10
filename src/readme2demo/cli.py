@@ -18,7 +18,6 @@ import sys
 from pathlib import Path
 import json
 from typing import Optional
-from importlib.metadata import version as pkg_version, PackageNotFoundError
 
 import typer
 from rich.console import Console
@@ -27,6 +26,8 @@ from rich.markup import escape
 from readme2demo.config import Config
 from readme2demo.manifest import STAGES, Manifest
 from readme2demo.orchestrator import Orchestrator, PipelineError, summarize
+from readme2demo import __version__ as version
+
 
 # Sentinel value the argv normalizer injects after a bare provider preset flag
 # (`--gemini` / `--openai` / `--anthropic`), meaning "no model named here —
@@ -80,14 +81,12 @@ app = _OptionalPresetValueTyper(
 )
 console = Console()
 
+
 def _version_callback(value: bool) -> None:
     if value:
-        try:
-            ver = pkg_version("readme2demo")
-        except PackageNotFoundError:
-            ver = "unknown"
-        console.print(ver)
+        console.print(version)
         raise typer.Exit()
+
 
 @app.callback()
 def main(
@@ -100,6 +99,7 @@ def main(
     ),
 ) -> None:
     pass
+
 
 def _build_config(
     config_file: Optional[Path],
