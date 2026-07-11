@@ -335,6 +335,11 @@ def run(
              "else the config default.",
     ),
     config_file: Optional[Path] = typer.Option(None, "--config", help="readme2demo.toml path"),
+    # 1. ΠΡΟΣΘΗΚΗ ΕΔΩ: Δηλώνουμε το option στο Typer
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Run ingest/plan only and print feasibility/blockers, then stop.",
+    ),
 ) -> None:
     """Run the full pipeline against a repository, a step-by-step guide, or both."""
     repo_url = _resolve_repo(repo_url, github_repo, step_by_step)
@@ -349,6 +354,11 @@ def run(
         config_file, engine, model, output_dir, timeout,
         budget_usd, max_turns, skip_video, base_image, llm_backend,
     )
+    
+    # 2. ΕΔΩ (όπως το είχες): Ενημερώνουμε το config
+    if dry_run:
+        cfg = cfg.model_copy(update={"dry_run": True})
+        
     if step_by_step is not None:
         cfg = cfg.model_copy(update={"step_by_step": step_by_step})
     if repo_url is None:
@@ -438,19 +448,16 @@ def resume(
 @app.command()
 def report(
     run_dir: Path = typer.Argument(..., help="Path to a runs/<run-id> directory"),
-    json_output: bool = typer.Option(False, "--json", help="Emit summary as JSON"),
+   json_output: bool = typer.Option(False, "--json", help="Emit summary as JSON"),
 ) -> None:
     """Print a summary of a run: stage statuses, verification, cost."""
     manifest = Manifest.load(run_dir)
     if json_output:
         output_data = {
-            "stages": [
-                {"name": name, "status": rec.status}
-                for name, rec in manifest.stages.items()
-            ],
-            "verified": manifest.verified,
-            "cost": manifest.total_cost_usd,
-            "commit": manifest.commit_sha,
+            "stages": [{"name": s.name, "status": s.status} for s in getattr(manifest, "stages", [])] if hasattr(manifest, "stages") else {},
+            "verified": getattr(manifest, "verified", False),
+            "cost": getattr(manifest, "cost", 0.0),
+            "commit": getattr(manifest, "commit", None) or getattr(manifest, "repo_commit", None),
         }
         print(json.dumps(output_data, indent=2))
         raise typer.Exit(0)
