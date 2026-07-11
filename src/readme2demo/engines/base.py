@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Optional
 
 from readme2demo.types import CommandLog
 
@@ -35,6 +35,23 @@ class AgentEngine(ABC):
     """One AI agent backend (claude-code, openhands, ...)."""
 
     name: ClassVar[str]
+
+    # Sandbox image this engine needs its runtime baked into, or None when the
+    # standard base image already carries it (claude-code). Applied by the CLI
+    # only when the user set no base_image anywhere — an explicit choice wins.
+    default_image: ClassVar[Optional[str]] = None
+
+    def check_image(self, image: str) -> None:
+        """Preflight probe that ``image`` can actually run this engine.
+
+        Default: no-op. Engines whose runtime is NOT in the standard base
+        image override this to fail fast — with build instructions — before
+        a run directory is created, instead of dying mid-run with a bare
+        exit 127 and no transcript.
+
+        Raises:
+            EngineError: when the image cannot run this engine.
+        """
 
     @abstractmethod
     def required_env(self) -> list[str]:

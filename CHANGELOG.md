@@ -5,7 +5,78 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] — 2026-07-10
+
+### Added
+- Provider presets `--gemini [model]`, `--openai [model]`, and `--anthropic
+  [model]` on `run` and `resume`: each runs the whole session on that
+  provider via its single API key (`GEMINI_API_KEY` / `OPENAI_API_KEY` /
+  `ANTHROPIC_API_KEY`). A preset selects the OpenHands engine for the
+  sandboxed agent, the matching LLM backend for the planner/distiller/tutorial
+  passes (`gemini` via `google-genai`, a new `openai` backend via the `openai`
+  SDK, `api` via the Anthropic SDK), and bridges the key into the engine's
+  litellm-style `LLM_API_KEY`/`LLM_MODEL`. No Gemini or OpenAI model name is
+  hardcoded (both providers retire model names): name it inline (`--gemini
+  gemini-3.5-flash`, `--openai gpt-5.1`), via `--model`, or via the
+  `GEMINI_MODEL` / `OPENAI_MODEL` env var — a bare flag with none of those is
+  a loud preflight error; `--anthropic` falls back to the config model.
+  Install the SDK extras: `pip install 'readme2demo[gemini]'` /
+  `'readme2demo[openai]'`. Presets are mutually exclusive, and conflicting
+  flags (`--engine claude-code`, a mismatched `--llm-backend`, two differing
+  model spellings) are rejected. The default without any flag is unchanged:
+  the claude-code engine on your Claude subscription.
+- `images/openhands/Dockerfile`: sandbox image with the pinned OpenHands
+  0.48.0 runtime — the newest release with wheels for both amd64 and arm64
+  (self-contained Python 3.13 via uv, tmux for the local runtime). It
+  is the default image for `--engine openhands` and the provider presets when
+  no `base_image` is set, and preflight probes the image so a missing runtime
+  is a fast, actionable error instead of a mid-run exit 127 with no
+  transcript.
+- Preflight now fails fast — before a run directory is created — when an
+  explicitly chosen LLM backend is missing its API key (`api` without
+  `ANTHROPIC_API_KEY`, `openai` without `OPENAI_API_KEY`), when its optional
+  SDK is absent, broken (the real ImportError is quoted), or too old
+  (`llm.check_sdk`), when no model name is resolvable for a provider backend
+  (`llm.check_model` — a bare `--llm-backend gemini` with no model named
+  anywhere), or when the configured backend name is unknown.
+
+### Fixed
+- OpenHands runs no longer scan the echoed task prompt for outcome markers
+  (run glow-20260710-182508): OpenHands records the prompt as a
+  `source:"user"` message in the trajectory, and its marker documentation
+  (`BLOCKED: <reason>`, `ADJUSTED_SUCCESS: <new command>`, the literal
+  R2D_SUCCESS example) was parsed as real markers — a genuinely successful
+  run was reported blocked and the plan's success command was overwritten
+  with the `<new command>` placeholder. User-sourced messages are now
+  skipped, and the shared marker scanners additionally reject captures that
+  are un-filled `<...>` template placeholders (protects claude-code when a
+  model restates its instructions verbatim).
+- A missing optional LLM SDK (`openai` / `google-genai`) is now a preflight
+  error (`llm.check_sdk`), caught before a run directory is created — a
+  `--openai` run without the package previously passed preflight and burned
+  its ingest stage on an ImportError (run glow-20260710-162012).
+- Dynamic text printed through Rich (stage errors, run summaries, adjusted
+  commands, corrected patterns, guide steps) is now markup-escaped. The
+  install hint `pip install 'readme2demo[openai]'` previously rendered as the
+  useless `pip install 'readme2demo'` because Rich parsed `[openai]` as a
+  markup tag; shell snippets like `[ -f x ]` and regexes like `[0-9]+` were
+  equally at risk of being silently swallowed.
+- OpenHands engine actually runs inside the sandbox, verified end-to-end up
+  to the LLM call: `RUNTIME=local` (no nested Docker runtime),
+  `WORKSPACE_BASE=/work` (else the agent runs in an empty temp dir), the
+  image's `openhands-python` wrapper (a PATH prepend is erased by `bash -lc`
+  sourcing /etc/profile, and a symlink from outside a venv skips pyvenv.cfg),
+  `SKIP_DEPENDENCY_CHECK=1` plus a `poetry run` shim (LocalRuntime assumes
+  OpenHands' dev-repo layout), missing undeclared deps baked into the image
+  (`deprecated`, `memory-profiler`, `jupyter-kernel-gateway`), a browser
+  fail-fast patch (browser startup could block the action server past the
+  client's 120s connect window), `USER="$(id -un)"` for the agent process
+  (docker never sets USER; unset, OpenHands runs bash as the nonexistent
+  `openhands` user via `su` — impossible under cap-drop ALL), and
+  stdout/stderr captured to `agent.stderr` so failures surface in the error
+  message instead of "(empty)". The agent's full log is now always copied to
+  `runs/<id>/agent.stderr` before the sandbox is destroyed, and
+  no-transcript errors point at it.
 
 ## [0.4.1] — 2026-07-09
 

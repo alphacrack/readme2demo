@@ -24,9 +24,23 @@ replay still verifies every command.
 
 ### What do I need installed?
 
-Python 3.10+ and Docker, plus one Claude credential — either a local Claude Code
-install (`--llm-backend claude-cli` with `CLAUDE_CODE_OAUTH_TOKEN`) or an
-`ANTHROPIC_API_KEY`.
+Python 3.10+ and Docker, plus one model credential — a local Claude Code
+install (`--llm-backend claude-cli` with `CLAUDE_CODE_OAUTH_TOKEN`), an
+`ANTHROPIC_API_KEY`, an `OPENAI_API_KEY` (with `--openai`), or a
+`GEMINI_API_KEY` (with `--gemini`).
+
+### Can I use OpenAI or Google Gemini instead of Claude?
+
+Yes. One key runs the whole session: `--openai gpt-5.1` (needs
+`OPENAI_API_KEY`) or `--gemini gemini-3.5-flash` (needs `GEMINI_API_KEY`)
+switch both the sandboxed agent (OpenHands engine) and the
+planner/distiller/tutorial passes to that provider. Install the SDK extra
+(`pip install 'readme2demo[openai]'` or `'readme2demo[gemini]'`) and build the
+OpenHands sandbox image once
+(`docker build -t readme2demo/openhands:latest images/openhands/`). No model
+name is built in — pass one with the flag or export
+`OPENAI_MODEL`/`GEMINI_MODEL`. The default without any flag is unchanged:
+Claude via the claude-code engine.
 
 ### Can I use my Claude subscription instead of an API key?
 

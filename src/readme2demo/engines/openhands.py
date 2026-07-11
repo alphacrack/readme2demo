@@ -1,10 +1,13 @@
 """OpenHands headless engine (opt-in, experimental).
 
 Runs OpenHands headless mode (``python -m openhands.core.main``) inside *our*
-sandbox — we bypass OpenHands' own runtime-sandbox logic and treat it like any
-process in the container (one sandbox model, not two). Selected via
-``--engine openhands`` when ``LLM_API_KEY`` and ``LLM_MODEL`` (litellm-style)
-are provided.
+sandbox — RUNTIME=local bypasses OpenHands' own runtime-sandbox logic and
+treats it like any process in the container (one sandbox model, not two).
+Selected via ``--engine openhands`` or any provider preset (``--gemini`` /
+``--openai`` / ``--anthropic``, which fill the litellm-style ``LLM_API_KEY``
+and ``LLM_MODEL`` from the provider's key); needs the
+``readme2demo/openhands`` image (pinned OpenHands 0.48 — see
+images/openhands/Dockerfile before bumping).
 
 .. warning::
    OpenHands support is **experimental**. The trajectory schema has drifted
@@ -114,16 +117,118 @@ class OpenHandsEngine(AgentEngine):
 
     name = "openhands"
 
+    # The standard base image has neither OpenHands nor a `python` alias — a
+    # run against it dies with a bare exit 127 and no transcript. This image
+    # (images/openhands/Dockerfile) bakes in the pinned 0.x runtime; the CLI
+    # uses it automatically for this engine unless base_image is set
+    # explicitly, and check_image probes for it at preflight.
+    default_image = "readme2demo/openhands:latest"
+
     def required_env(self) -> list[str]:
         return ["LLM_API_KEY", "LLM_MODEL"]
 
+    def resolve_env(self) -> dict[str, str]:
+        """Collect litellm-style credentials, with preset guidance on failure.
+
+        The provider presets (``--gemini`` / ``--openai`` / ``--anthropic``)
+        normally fill these from the provider's own key before this runs, so a
+        miss here usually means bare ``--engine openhands`` without them.
+        """
+        import os
+
+        from readme2demo.engines.base import EngineError
+
+        missing = [k for k in self.required_env() if not os.environ.get(k)]
+        if missing:
+            raise EngineError(
+                f"Engine 'openhands' needs litellm-style credentials; not set: "
+                f"{', '.join(missing)}. Use a provider preset (--gemini / "
+                "--openai / --anthropic) to fill them from GEMINI_API_KEY / "
+                "OPENAI_API_KEY / ANTHROPIC_API_KEY, or export LLM_API_KEY and "
+                "LLM_MODEL (e.g. LLM_MODEL=openai/gpt-5.1) yourself."
+            )
+        return {k: os.environ[k] for k in self.required_env()}
+
+    def check_image(self, image: str) -> None:
+        """Fail fast when ``image`` can't import the OpenHands 0.x runtime.
+
+        Docker-level problems (docker missing, daemon down) are NOT reported
+        here — the docker preflight check owns those; this probe only speaks
+        up when docker ran the image and OpenHands wasn't importable.
+        """
+        import subprocess
+
+        from readme2demo.engines.base import EngineError
+
+        try:
+            proc = subprocess.run(
+                [
+                    "docker", "run", "--rm", "--entrypoint", "bash", image,
+                    "-lc", "openhands-python -c 'import openhands.core.main'",
+                ],
+                capture_output=True, text=True, timeout=120,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return  # docker itself is missing/wedged — reported elsewhere
+        if proc.returncode == 0:
+            return
+        detail = (proc.stderr or proc.stdout or "").strip()
+        if "docker daemon" in detail.lower() or "docker api" in detail.lower():
+            return  # daemon down, not an image problem — docker's own check owns it
+        raise EngineError(
+            f"Sandbox image {image!r} can't run OpenHands "
+            f"(probe: {detail[-300:] or 'import failed'}).\n"
+            "Build the OpenHands sandbox image and retry:\n"
+            "  docker build -t readme2demo/base:latest images/base\n"
+            "  docker build -t readme2demo/openhands:latest images/openhands\n"
+            "It is the default image for --engine openhands and the provider "
+            "presets (--gemini / --openai / --anthropic); pass --base-image "
+            "to use a different one."
+        )
+
     def build_command(self, limits: Limits) -> str:
+        # openhands-python: the image's /usr/local/bin symlink to the venv —
+        # NOT `python3` (the distro python has no OpenHands, and a PATH
+        # prepend is wiped by `bash -lc` sourcing /etc/profile). RUNTIME=local
+        # executes actions directly in THIS sandbox — without it OpenHands
+        # tries to manage its own Docker runtime, which cannot work inside
+        # the hardened container. SAVE_TRAJECTORY_PATH is an env var, not a
+        # flag: the pinned 0.48 CLI has no --save-trajectory-path (that flag
+        # arrived in later, x86_64-only releases); both map onto the same
+        # OpenHandsConfig field via load_from_env. stdout+stderr go to
+        # agent.stderr so a failure surfaces in AgentRunError, not "(empty)".
         transcript_dir = posixpath.dirname(TRANSCRIPT_CONTAINER_PATH)
+        stderr_path = posixpath.join(transcript_dir, "agent.stderr")
+        env_prefix = (
+            # docker never sets USER; unset, OpenHands' get_user_info falls
+            # back to username 'openhands' and BashSession then runs
+            # `su openhands -` — a nonexistent user, and `su` is impossible
+            # under cap-drop ALL anyway. The current (non-root) user is
+            # always right in this one-sandbox model.
+            'USER="$(id -un)" '
+            "RUNTIME=local "
+            # LocalRuntime's dependency check probes the OpenHands DEV repo
+            # layout (poetry project); this venv install isn't one. The bits
+            # the check guards (tmux, kernel gateway) are baked into the
+            # image, so skipping is safe.
+            "SKIP_DEPENDENCY_CHECK=1 "
+            # Where the agent's actions execute; /work holds the repo copy.
+            # Unset, OpenHands runs in a fresh temp dir and the agent would
+            # find an empty workspace.
+            "WORKSPACE_BASE=/work "
+            # No playwright browsers in the image (and headless chromium is
+            # unlikely to survive the hardened sandbox); the README workflow
+            # is shell-driven, so the agent gets bash + editing only.
+            "AGENT_ENABLE_BROWSING=false "
+            "AGENT_ENABLE_JUPYTER=false "
+            f"SAVE_TRAJECTORY_PATH={TRANSCRIPT_CONTAINER_PATH} "
+        )
         return (
             f"mkdir -p {transcript_dir} && "
-            f'python -m openhands.core.main -t "$(cat {PROMPT_CONTAINER_PATH})" '
+            f"{env_prefix}"
+            f'openhands-python -m openhands.core.main -t "$(cat {PROMPT_CONTAINER_PATH})" '
             f"--max-iterations {limits.max_turns} "
-            f"--save-trajectory-path {TRANSCRIPT_CONTAINER_PATH}"
+            f">{stderr_path} 2>&1"
         )
 
     def parse_transcript(self, transcript_path: Path) -> CommandLog:
@@ -156,6 +261,16 @@ class OpenHandsEngine(AgentEngine):
                     pending.append(entry)
 
             elif action == "message":
+                if event.get("source") == "user":
+                    # OpenHands echoes the TASK PROMPT into the trajectory as
+                    # a source="user" message action (plus its own
+                    # auto-continue nudges). The prompt DOCUMENTS the markers,
+                    # so scanning it harvests the literal templates
+                    # (`BLOCKED: <reason>`, `ADJUSTED_SUCCESS: <new command>`,
+                    # R2D_SUCCESS) as real markers — a run whose agent
+                    # genuinely succeeded was once reported blocked by its own
+                    # instructions. Only agent-sourced text carries markers.
+                    continue
                 text = _message_text(event)
                 if SUCCESS_MARKER in text:
                     marker_seen = True

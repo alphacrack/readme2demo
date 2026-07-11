@@ -130,6 +130,18 @@ def run_agent(run_dir: Path, plan: Plan, engine: AgentEngine, cfg: Config) -> Pa
             engine.build_command(limits), timeout=cfg.agent_timeout_s
         )
 
+        # Always pull the agent's full log to the host BEFORE the sandbox is
+        # destroyed — a 2KB stderr tail once hid the real server error behind
+        # a client-side traceback, leaving nothing to diagnose with.
+        stderr_container = posixpath.join(
+            posixpath.dirname(TRANSCRIPT_CONTAINER_PATH), "agent.stderr"
+        )
+        host_stderr = run_dir / "agent.stderr"
+        try:
+            sandbox.copy_out(stderr_container, host_stderr)
+        except SandboxError:
+            pass  # best-effort; the tail read below still works
+
         try:
             sandbox.copy_out(TRANSCRIPT_CONTAINER_PATH, transcript_path)
         except SandboxError:
@@ -137,9 +149,13 @@ def run_agent(run_dir: Path, plan: Plan, engine: AgentEngine, cfg: Config) -> Pa
 
         if not transcript_path.exists() or transcript_path.stat().st_size == 0:
             stderr_tail = _read_stderr_tail(sandbox)
+            log_hint = (
+                f" Full agent log: {host_stderr}." if host_stderr.exists() else ""
+            )
             raise AgentRunError(
                 f"Agent produced no transcript (engine={engine.name}, "
-                f"exec exit={agent_res.exit_code}). stderr tail:\n{stderr_tail}"
+                f"exec exit={agent_res.exit_code}).{log_hint} "
+                f"stderr tail:\n{stderr_tail}"
             )
     finally:
         sandbox.destroy()

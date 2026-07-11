@@ -30,6 +30,13 @@ readme2demo run https://github.com/example/tool --llm-backend claude-cli
 # Or on metered API billing
 export ANTHROPIC_API_KEY=sk-ant-...
 readme2demo run https://github.com/example/tool
+
+# Or entirely on OpenAI or Google Gemini (OpenHands agent + matching passes)
+export OPENAI_API_KEY=sk-...
+readme2demo run https://github.com/example/tool --openai gpt-5.1
+
+export GEMINI_API_KEY=...
+readme2demo run https://github.com/example/tool --gemini gemini-3.5-flash
 ```
 
 The repository is optional — you can run from a self-contained step-by-step

@@ -35,8 +35,10 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full architecture.
 - Python ≥ 3.10, Docker
 - Auth, one of:
   - **Your Claude subscription (no API key):** a local Claude Code install. The planner/distiller/tutorial passes run on your subscription via `--llm-backend claude-cli` (`claude -p`), and the in-sandbox agent authenticates with `CLAUDE_CODE_OAUTH_TOKEN` (create one: `claude setup-token`). Fully supported for **self-hosted, single-operator** runs against your own repos — Pro/Max plans include a monthly Agent SDK credit that covers `claude -p`.
-  - `ANTHROPIC_API_KEY` — metered API billing; best for scale and concurrency, and **required if you host readme2demo as a service for others** (per Anthropic's terms, subscription auth may not power a multi-tenant product — see [ROADMAP.md](ROADMAP.md)).
-- Optional: `LLM_API_KEY` + `LLM_MODEL` for `--engine openhands` (experimental)
+  - `ANTHROPIC_API_KEY` — metered API billing; best for scale and concurrency, and **required if you host readme2demo as a service for others** (per Anthropic's terms, subscription auth may not power a multi-tenant product — see [ROADMAP.md](ROADMAP.md)). Add `--anthropic [model]` to run the sandboxed agent on the OpenHands engine with a Claude model instead of claude-code.
+  - **Google Gemini (`--gemini [model]`):** a single `GEMINI_API_KEY` runs the whole session off Claude — the planner/distiller/tutorial passes use Gemini and the sandboxed agent runs on the OpenHands engine (also on Gemini). No model name is built in (Google retires old ones with a hard 404): name it per run (`--gemini gemini-3.5-flash`) or export `GEMINI_MODEL` once. Install the extra: `pip install 'readme2demo[gemini]'`.
+  - **OpenAI (`--openai [model]`):** same shape as Gemini — a single `OPENAI_API_KEY` powers the passes and the OpenHands agent, no model name is built in (`--openai gpt-5.1` or export `OPENAI_MODEL`). Install the extra: `pip install 'readme2demo[openai]'`.
+- Optional: `LLM_API_KEY` + `LLM_MODEL` for `--engine openhands` (experimental) with any other litellm provider — the presets above fill them automatically
 
 ```bash
 # run on your Claude subscription (no API key) — supported for self-hosted runs
@@ -48,6 +50,23 @@ readme2demo run <repo-url> --llm-backend claude-cli
 # run on metered API billing (scale, concurrency, or hosting for others)
 export ANTHROPIC_API_KEY=sk-ant-...
 readme2demo run <repo-url>              # --llm-backend auto picks api
+
+# run the whole session on Google Gemini (OpenHands agent + Gemini passes)
+pip install 'readme2demo[gemini]'
+docker build -t readme2demo/openhands:latest images/openhands   # one-time: OpenHands sandbox image
+export GEMINI_API_KEY=...
+readme2demo run <repo-url> --gemini gemini-3.5-flash   # model named per run
+export GEMINI_MODEL=gemini-3.5-flash                   # ...or set once, then:
+readme2demo run <repo-url> --gemini                    # bare flag reads GEMINI_MODEL
+
+# run the whole session on OpenAI (OpenHands agent + OpenAI passes)
+pip install 'readme2demo[openai]'
+export OPENAI_API_KEY=sk-...
+readme2demo run <repo-url> --openai gpt-5.1            # or export OPENAI_MODEL once
+
+# run the OpenHands agent with a Claude model on API billing
+export ANTHROPIC_API_KEY=sk-ant-...
+readme2demo run <repo-url> --anthropic                 # uses the config model by default
 ```
 
 ## Install
@@ -55,6 +74,7 @@ readme2demo run <repo-url>              # --llm-backend auto picks api
 ```bash
 pip install -e ".[dev]"
 docker build -t readme2demo/base:latest images/base/
+docker build -t readme2demo/openhands:latest images/openhands/   # only for --engine openhands / --gemini / --openai / --anthropic
 ```
 
 ## Usage
@@ -64,6 +84,9 @@ readme2demo run https://github.com/example/tool
 readme2demo run -gr https://github.com/example/tool             # same, via the flag
 readme2demo run -s my_guide.md                                  # guide-only: no repo, your guide is self-contained
 readme2demo run -gr https://github.com/example/tool -s my_guide.md   # both: your guide drives everything
+readme2demo run https://github.com/example/tool --gemini gemini-3.5-flash  # run on Google Gemini (needs GEMINI_API_KEY; uses the OpenHands agent; bare --gemini reads GEMINI_MODEL)
+readme2demo run https://github.com/example/tool --openai gpt-5.1           # run on OpenAI (needs OPENAI_API_KEY; uses the OpenHands agent; bare --openai reads OPENAI_MODEL)
+readme2demo run https://github.com/example/tool --anthropic                # OpenHands agent with a Claude model on ANTHROPIC_API_KEY
 readme2demo run https://github.com/example/tool --allow-docker-socket  # for tools that manage containers (SECURITY TRADEOFF: pierces sandbox isolation — trusted repos only)
 readme2demo run https://github.com/example/tool --skip-video --budget-usd 3
 readme2demo resume runs/tool-20260702-... --from-stage render
