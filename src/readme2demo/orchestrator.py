@@ -333,10 +333,13 @@ class Orchestrator:
                 self.manifest.stage_fail(stage, f"{type(e).__name__}: {e}")
                 raise
 
-            # Έλεγχος για dry-run αμέσως μετά την επιτυχrunning του ingest στάδιου
-            if stage == "ingest" and getattr(self.cfg, "dry_run", False):
-                console.print("\n[bold yellow]ℹ Dry-run mode active. Stopping after ingest and planning.[/]")
-                # Μαρκάρουμε τα επόμενα στάδια ως skipped με σαφή αιτιολογία
+            # --dry-run: the feasibility verdict and blockers are known once
+            # ingest completes; stop before any agent cost is spent and mark
+            # the remaining stages skipped with a clear reason.
+            if stage == "ingest" and self.cfg.dry_run:
+                console.print(
+                    "\n[bold yellow]ℹ Dry run: stopping after ingest/planning.[/]"
+                )
                 for s in ("agent", "normalize", "distill", "verify", "render", "tutorial"):
                     if self.manifest.stages[s].status != "completed":
                         self.manifest.stage_skip(s, reason="dry-run stop")

@@ -34,6 +34,7 @@ provide both. At least one is required.
 | `--gemini [model]` | Run the whole session on Google Gemini via `GEMINI_API_KEY` (OpenHands agent + Gemini passes). Bare flag reads `--model` / `GEMINI_MODEL`. |
 | `--anthropic [model]` | Run the sandboxed agent on OpenHands with a Claude model via `ANTHROPIC_API_KEY`. |
 | `--budget-usd` | Abort the run if the agent's cost exceeds this. |
+| `--dry-run` | Stop after ingest/planning with the feasibility verdict and blockers — no agent time spent. |
 | `--skip-video` / `--with-video` | Skip or force VHS rendering. |
 | `--allow-docker-socket` | Mount the host Docker socket into the sandbox. Security tradeoff — trusted repos only. |
 
