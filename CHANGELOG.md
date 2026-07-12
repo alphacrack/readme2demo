@@ -5,6 +5,30 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-07-12
+
+### Added
+- `--dry-run` flag on `run`: stop right after the ingest/planning stage with
+  the feasibility verdict and blockers, before any agent time is spent; the
+  remaining stages are marked skipped with reason "dry-run stop" (#29, #30,
+  thanks @Garifallos). Promoted to a first-class `dry_run` config field, so
+  it can also be set in `readme2demo.toml`.
+
+### Fixed
+- `report --json` crashed with an AttributeError on any run whose manifest
+  had recorded stages (the stages dict was iterated as a list of objects),
+  and reported `cost` as 0.0 and `commit` as null from nonexistent field
+  names — a regression that slipped in alongside the dry-run CLI change
+  (the old test only covered an empty manifest). Restored the real manifest
+  fields (`total_cost_usd`, `commit_sha`) with a regression test that uses a
+  populated manifest.
+
+### Changed
+- CI: bump `actions/checkout` 4 → 7 and `actions/deploy-pages` 4 → 5
+  (Dependabot).
+- Internal go-to-market notes (`launch/`, `RELEASE_PLAN.md`,
+  `IMPLEMENTATION_PLAN.md`) removed from the tracked repo.
+
 ## [0.5.0] — 2026-07-10
 
 ### Added
