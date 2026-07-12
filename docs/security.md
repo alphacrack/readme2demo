@@ -23,6 +23,10 @@ fresh container** with no state carried over from the agent's run.
 - **`--allow-docker-socket`** is off by default. Enabling it mounts the host
   Docker socket into the sandbox so demos that manage containers work — but the
   socket pierces isolation. Only enable it for repositories you trust.
+- **Unrestricted network egress**: the sandbox has outbound network access via
+  bridge networking. An egress proxy that restricts outbound connections is
+  planned but not yet implemented. Data exfiltration by a compromised agent is
+  not prevented in this release.
 
 ## Reporting a vulnerability
 

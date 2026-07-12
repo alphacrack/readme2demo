@@ -36,9 +36,11 @@ than let you discover them.
   sandbox. Doing so is effectively root on the host's Docker daemon. **Only
   pass it for repos you trust**, and the CLI treats it as an explicit,
   opt-in security tradeoff.
-- **Network egress is allowlisted, not eliminated.** Runs need to clone repos
-  and pull packages, so the sandbox has outbound network access. Data
-  exfiltration by a determined, compromised agent is not fully prevented in
+- **Network egress is unrestricted bridge networking.** Runs need to clone repos
+  and pull packages, so the sandbox has outbound network access. A
+  key-injecting egress proxy that restricts outbound connections is planned
+  (see ROADMAP / egress-proxy epic) but not yet implemented. Data
+  exfiltration by a determined, compromised agent is not prevented in
   this release.
 
 Do not run readme2demo against untrusted repos on a machine that holds
