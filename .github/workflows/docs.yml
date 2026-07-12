@@ -27,7 +27,7 @@ jobs:
       # Ensures Pages is enabled with build_type=workflow. If Pages isn't
       # available for the repo (e.g. a private repo on the Free plan), this
       # step fails with a clear message instead of a vague deploy error.
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
         with:
           enablement: true
       - uses: actions/setup-python@v6
