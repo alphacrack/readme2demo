@@ -332,6 +332,16 @@ class Orchestrator:
             except Exception as e:  # noqa: BLE001 — record, then re-raise
                 self.manifest.stage_fail(stage, f"{type(e).__name__}: {e}")
                 raise
+
+            # Έλεγχος για dry-run αμέσως μετά την επιτυχrunning του ingest στάδιου
+            if stage == "ingest" and getattr(self.cfg, "dry_run", False):
+                console.print("\n[bold yellow]ℹ Dry-run mode active. Stopping after ingest and planning.[/]")
+                # Μαρκάρουμε τα επόμενα στάδια ως skipped με σαφή αιτιολογία
+                for s in ("agent", "normalize", "distill", "verify", "render", "tutorial"):
+                    if self.manifest.stages[s].status != "completed":
+                        self.manifest.stage_skip(s, reason="dry-run stop")
+                break
+
         return self.manifest
 
 
