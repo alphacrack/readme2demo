@@ -566,3 +566,136 @@ def test_cwd_hints_quiet_when_cd_in_same_line():
 
     script = "cd /tmp\ncd /work && pip install -e .\n"
     assert cwd_hints(script) == []
+
+
+# --- OpenHandsEngine.parse_transcript: prompt-echo marker poisoning -----------
+
+
+def test_regression_prompt_echo_markers_poison_openhands_outcome(tmp_path):
+    """Regression (run glow-20260710-182508): OpenHands echoes the TASK PROMPT
+    into the trajectory as a source="user" message action. The prompt
+    documents the markers (`BLOCKED: <reason>`, `ADJUSTED_SUCCESS: <new
+    command> EXPECT: <regex the output matches>`, `FIX: ...`, and a literal
+    R2D_SUCCESS example), so scanning it like agent output harvested the
+    un-filled templates as real markers: a run whose agent genuinely printed
+    R2D_SUCCESS was reported blocked with reason '<reason>', and plan.json's
+    success command was overwritten with the literal '<new command>'.
+    User-sourced messages must never be marker-scanned.
+    """
+    from readme2demo.engines.openhands import OpenHandsEngine
+
+    prompt_echo = (
+        "# Task: make the quickstart work\n"
+        "Declare deviations like this:\n"
+        "FIX: <what you are changing> BECAUSE: <why the README's version fails>\n"
+        "If truly impossible print:\n"
+        "BLOCKED: <reason>\n"
+        "If infrastructure is missing declare:\n"
+        "ADJUSTED_SUCCESS: <new command> EXPECT: <regex the output matches>\n"
+        "On success print exactly:\n"
+        "R2D_SUCCESS\n"
+    )
+    events = [
+        {"action": "message", "source": "user", "args": {"content": prompt_echo}},
+        {"action": "run", "source": "agent", "args": {"command": "go build -o glow ."}},
+        {
+            "observation": "run", "source": "agent",
+            "content": "built", "extras": {"exit_code": 0},
+        },
+        {"action": "message", "source": "user", "args": {"content": "Please continue."}},
+        {"action": "message", "source": "agent", "args": {"content": "R2D_SUCCESS"}},
+    ]
+    path = tmp_path / "trajectory.json"
+    path.write_text(json.dumps(events), encoding="utf-8")
+    log = OpenHandsEngine().parse_transcript(path)
+    assert log.result.outcome == "success"  # the agent's own marker counts
+    assert log.result.blocked_reason is None  # '<reason>' must not
+    assert log.adjusted_success_command is None
+    assert log.adjusted_success_pattern is None
+    assert log.fixes == []
+    assert [e.cmd for e in log.entries] == ["go build -o glow ."]
+
+
+def test_openhands_agent_markers_still_parse(tmp_path):
+    # Source filtering must not silence REAL agent-emitted markers.
+    from readme2demo.engines.openhands import OpenHandsEngine
+
+    events = [
+        {
+            "action": "message", "source": "agent",
+            "args": {"content": "FIX: pin go 1.22 BECAUSE: build needs it\n"
+                                "BLOCKED: needs a GPU"},
+        },
+    ]
+    path = tmp_path / "trajectory.json"
+    path.write_text(json.dumps(events), encoding="utf-8")
+    log = OpenHandsEngine().parse_transcript(path)
+    assert log.result.outcome == "blocked"
+    assert log.result.blocked_reason == "needs a GPU"
+    assert log.fixes[0].what == "pin go 1.22"
+
+
+# --- scan_markers / scan_adjusted: template-placeholder guard ------------------
+
+
+def test_regression_marker_scanners_ignore_template_placeholders():
+    """Regression (run glow-20260710-182508, second defense): a model that
+    restates its marker instructions verbatim in assistant text must not
+    produce markers whose values are the un-filled `<...>` templates — this
+    guard protects claude-code too, where the poison would come from the
+    model quoting its prompt rather than from a trajectory echo.
+    """
+    from readme2demo.engines.claude_code import scan_adjusted, scan_markers
+
+    fixes: list = []
+    reason = scan_markers(
+        "FIX: <what you are changing> BECAUSE: <why the README's version fails>\n"
+        "BLOCKED: <reason>",
+        fixes,
+    )
+    assert reason is None
+    assert fixes == []
+    assert scan_adjusted(
+        "ADJUSTED_SUCCESS: <new command> EXPECT: <regex the output matches>"
+    ) is None
+    # A real command with a placeholder pattern degrades to exit-code-only.
+    assert scan_adjusted(
+        "ADJUSTED_SUCCESS: ./glow --help EXPECT: <regex the output matches>"
+    ) == ("./glow --help", None)
+    # Real values still parse — including ones merely CONTAINING angle
+    # brackets: only a value that is one whole <...> token is a placeholder.
+    assert scan_markers("BLOCKED: needs docker <socket unavailable>", []) == (
+        "needs docker <socket unavailable>"
+    )
+    assert scan_markers("BLOCKED: <tool> needs a GPU here", []) == (
+        "<tool> needs a GPU here"
+    )
+    assert scan_adjusted("ADJUSTED_SUCCESS: ./tool version EXPECT: v[0-9]+") == (
+        "./tool version", "v[0-9]+"
+    )
+
+
+def test_prompt_echo_success_marker_alone_is_not_success(tmp_path):
+    """Pins the user-source skip independently of the placeholder guard: the
+    SUCCESS_MARKER check is an unanchored substring match with no placeholder
+    protection, so the source filter is its ONLY defense. A trajectory whose
+    only R2D_SUCCESS sits in the echoed prompt (no agent success message)
+    must parse as failed, never success.
+    """
+    from readme2demo.engines.openhands import OpenHandsEngine
+
+    events = [
+        {
+            "action": "message", "source": "user",
+            "args": {"content": "On success print exactly:\nR2D_SUCCESS\n"},
+        },
+        {"action": "run", "source": "agent", "args": {"command": "ls"}},
+        {
+            "observation": "run", "source": "agent",
+            "content": "README.md", "extras": {"exit_code": 0},
+        },
+    ]
+    path = tmp_path / "trajectory.json"
+    path.write_text(json.dumps(events), encoding="utf-8")
+    log = OpenHandsEngine().parse_transcript(path)
+    assert log.result.outcome == "failed"

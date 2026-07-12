@@ -19,9 +19,9 @@ else:  # pragma: no cover
 
 class Config(BaseModel):
     # Agent engine
-    engine: str = "claude-code"  # or "openhands"
+    engine: str = "claude-code"  # or "openhands" (used by --gemini/--openai/--anthropic)
     model: str = "claude-sonnet-5"  # model for planner/distiller/tutorial LLM calls
-    llm_backend: str = "auto"  # auto | api | claude-cli (host `claude -p` on your subscription; self-hosted only)
+    llm_backend: str = "auto"  # auto | api | claude-cli | gemini | openai (presets set one; claude-cli = host `claude -p`, self-hosted only)
     max_turns: int = 60
     agent_timeout_s: int = 1500
     budget_usd: float = 5.0
