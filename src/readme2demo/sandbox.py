@@ -7,6 +7,7 @@ optional — see IMPLEMENTATION_PLAN.md M2.
 
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import uuid
@@ -83,17 +84,21 @@ class Sandbox:
 
     @staticmethod
     def _run(cmd: list[str], timeout: Optional[int] = None,
-             stream_to: Optional[Path] = None) -> ExecResult:
+             stream_to: Optional[Path] = None,
+             env: Optional[dict[str, str]] = None) -> ExecResult:
         """Run a docker CLI command on the host."""
+        run_env = {**os.environ, **(env or {})}
         try:
             if stream_to is not None:
                 with open(stream_to, "ab") as sink:
                     proc = subprocess.run(
-                        cmd, stdout=sink, stderr=subprocess.STDOUT, timeout=timeout
+                        cmd, stdout=sink, stderr=subprocess.STDOUT, timeout=timeout,
+                        env=run_env
                     )
                 return ExecResult(proc.returncode, f"(streamed to {stream_to})")
             proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout, errors="replace"
+                cmd, capture_output=True, text=True, timeout=timeout, errors="replace",
+                env=run_env
             )
             return ExecResult(proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
         except subprocess.TimeoutExpired as e:
@@ -124,13 +129,13 @@ class Sandbox:
             cmd += ["--user", self.user]
         if self.group_add:
             cmd += ["--group-add", self.group_add]
-        for k, v in self.env.items():
-            cmd += ["-e", f"{k}={v}"]
+        for k in self.env:
+            cmd += ["--env", k]
         for src, dst, mode in self.mounts:
             # docker -v treats relative paths as volume names; force absolute.
             cmd += ["-v", f"{Path(src).resolve()}:{dst}:{mode}"]
         cmd += [self.image, "sleep", "infinity"]
-        res = self._run(cmd, timeout=120)
+        res = self._run(cmd, timeout=120, env=self.env)
         if not res.ok:
             raise SandboxError(f"docker run failed ({res.exit_code}): {res.output.strip()}")
         self._started = True
@@ -150,10 +155,10 @@ class Sandbox:
         cmd = ["docker", "exec"]
         if workdir or self.workdir:
             cmd += ["-w", workdir or self.workdir]
-        for k, v in (env or {}).items():
-            cmd += ["-e", f"{k}={v}"]
+        for k in (env or {}):
+            cmd += ["--env", k]
         cmd += [self.name, "bash", "-lc", command]
-        return self._run(cmd, timeout=timeout, stream_to=stream_to)
+        return self._run(cmd, timeout=timeout, stream_to=stream_to, env=env)
 
     def copy_in(self, src: Path, dst: str) -> None:
         res = self._run(["docker", "cp", str(src), f"{self.name}:{dst}"], timeout=300)
