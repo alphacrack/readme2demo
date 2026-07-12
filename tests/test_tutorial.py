@@ -504,6 +504,28 @@ def test_check_render_image_error_message(monkeypatch):
         render_mod.check_render_image("readme2demo/base:latest")
 
 
+def test_run_render_timeout_reports_actual_base_image(tmp_path, monkeypatch):
+    """Regression: timeout errors named the unused stock VHS image."""
+    import subprocess
+
+    from readme2demo.config import Config
+
+    actual_image = "example/render-base:issue-36"
+    (tmp_path / "demo.tape").write_text("Output demo.mp4\n")
+    monkeypatch.setattr(render, "check_render_image", lambda _: None)
+
+    def time_out(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(render.subprocess, "run", time_out)
+
+    with pytest.raises(render.RenderError) as exc_info:
+        render.run_render(tmp_path, Config(base_image=actual_image))
+
+    assert actual_image in str(exc_info.value)
+    assert "ghcr.io/charmbracelet/vhs:latest" not in str(exc_info.value)
+
+
 def test_step_by_step_keeps_heredoc_as_one_step(tmp_path):
     from readme2demo.tutorial import write_step_by_step
     from readme2demo.types import (

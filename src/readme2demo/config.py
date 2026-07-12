@@ -28,7 +28,6 @@ class Config(BaseModel):
 
     # Sandbox
     base_image: str = "readme2demo/base:latest"
-    vhs_image: str = "ghcr.io/charmbracelet/vhs:latest"
     network: str = "bridge"
     # SECURITY TRADEOFF, off by default: mount the host Docker socket into the
     # agent/verify/render containers. Required for tools whose demos manage

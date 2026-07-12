@@ -152,7 +152,7 @@ def run_render(run_dir: Path, cfg: Config, image: str | None = None) -> list[Pat
         )
     except subprocess.TimeoutExpired as e:
         raise RenderError(
-            f"VHS render timed out after {RENDER_TIMEOUT_S}s (image {image or cfg.vhs_image})"
+            f"VHS render timed out after {RENDER_TIMEOUT_S}s (image {render_image})"
         ) from e
     except FileNotFoundError as e:
         raise RenderError("docker CLI not found — install Docker and ensure it is on PATH") from e
