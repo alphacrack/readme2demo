@@ -23,7 +23,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Ensures Pages is enabled with build_type=workflow. If Pages isn't
       # available for the repo (e.g. a private repo on the Free plan), this
       # step fails with a clear message instead of a vague deploy error.

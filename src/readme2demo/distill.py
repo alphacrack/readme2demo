@@ -778,13 +778,18 @@ def build_tape_from_step_by_step(
     (run_dir / "tape_coverage.json").write_text(json.dumps(coverage, indent=2), encoding="utf-8")
     if tape and dropped:
         from rich.console import Console
+        from rich.markup import escape
 
-        Console().print(
+        console = Console()
+        console.print(
             f"[yellow]⚠ {len(dropped)}/{n_guide} guide steps excluded from the "
             f"video (not proven in the agent run):[/]"
         )
         for c in dropped:
-            Console().print(f"[yellow]    {c.splitlines()[0][:100]}[/]")
+            # escape(): guide commands routinely contain [bracketed] tokens
+            # (pip extras, sed/grep classes, [ -f x ]) that Rich would parse
+            # as markup and silently swallow from this diagnostic.
+            console.print(f"[yellow]    {escape(c.splitlines()[0][:100])}[/]")
     final_tape = tape if tape else fallback
     # A repo's own guide (no clone step) assumes the checkout is present; seed
     # /work from the verified worktree so its `pip install -e .`/build steps

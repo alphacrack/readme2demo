@@ -84,19 +84,35 @@ def truncate_output(text: str) -> str:
     return text[:HEAD_BYTES] + TRUNCATION_SEPARATOR + text[-TAIL_BYTES:]
 
 
+def _is_placeholder(value: str) -> bool:
+    """True for an un-filled template placeholder like ``<reason>``.
+
+    Models sometimes restate their marker instructions verbatim ("I will
+    print ``BLOCKED: <reason>`` if ..."), and transcript formats can echo the
+    task prompt itself. A captured value that is one whole ``<...>`` token is
+    the documentation template, never a real reason/command/pattern — taking
+    it at face value once reported a successful run as blocked and overwrote
+    the plan's success command with the literal ``<new command>``.
+    """
+    v = value.strip().strip("`").strip()
+    return len(v) > 2 and v.startswith("<") and v.endswith(">")
+
+
 def scan_markers(
     text: str, fixes: list[FixMarker]
 ) -> Optional[str]:
     """Scan assistant text for FIX/BLOCKED markers.
 
     Appends parsed :class:`FixMarker` objects to ``fixes`` and returns the
-    blocked reason if a BLOCKED marker was found (else None).
+    blocked reason if a BLOCKED marker was found (else None). Captures whose
+    value is a literal template placeholder are ignored (see
+    :func:`_is_placeholder`).
     """
     blocked_reason: Optional[str] = None
     for line in text.splitlines():
         line = line.strip()
         fix = _FIX_RE.match(line)
-        if fix and fix.group("what"):
+        if fix and fix.group("what") and not _is_placeholder(fix.group("what")):
             fixes.append(
                 FixMarker(
                     what=fix.group("what").strip(),
@@ -105,7 +121,11 @@ def scan_markers(
             )
             continue
         blocked = _BLOCKED_RE.match(line)
-        if blocked and blocked_reason is None:
+        if (
+            blocked
+            and blocked_reason is None
+            and not _is_placeholder(blocked.group("reason"))
+        ):
             blocked_reason = blocked.group("reason").strip()
     return blocked_reason
 
@@ -114,12 +134,16 @@ def scan_adjusted(text: str) -> Optional[tuple[str, Optional[str]]]:
     """Scan assistant text for an ADJUSTED_SUCCESS marker.
 
     Returns ``(command, expected_pattern_or_None)`` for the first marker
-    found, else None. Shared by all engine parsers.
+    found, else None. Shared by all engine parsers. A placeholder command
+    (``<new command>``) is not a marker; a placeholder pattern degrades to
+    None (exit code 0 remains the criterion).
     """
     for line in text.splitlines():
         m = _ADJUSTED_RE.match(line.strip())
-        if m and m.group("command"):
+        if m and m.group("command") and not _is_placeholder(m.group("command")):
             pattern = (m.group("pattern") or "").strip() or None
+            if pattern and _is_placeholder(pattern):
+                pattern = None
             return m.group("command").strip().strip("`"), pattern
     return None
 
