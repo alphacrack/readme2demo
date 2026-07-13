@@ -39,6 +39,9 @@ class Config(BaseModel):
     pids_limit: int = 512
 
     # Stages
+    # --dry-run: stop after ingest/planning (feasibility verdict + blockers),
+    # skipping the paid agent stage and everything downstream.
+    dry_run: bool = False
     verify_timeout_s: int = 900
     verify_retries: int = 1  # plain script retries before distiller feedback loop
     distill_retries: int = 1  # distiller feedback loops on verify failure

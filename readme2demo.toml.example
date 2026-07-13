@@ -28,6 +28,7 @@ pids_limit = 512
 allow_docker_socket = false
 
 # --- Stages -----------------------------------------------------------------
+dry_run = false               # stop after ingest/planning (feasibility verdict only)
 verify_timeout_s = 900
 verify_retries = 1
 distill_retries = 1

@@ -386,27 +386,35 @@ def test_regression_report_keeps_bracketed_error_text(tmp_path):
     assert result.exit_code == 0
     assert "readme2demo[openai]" in result.output
 
-def test_report_json_output(tmp_path, monkeypatch):
+def test_regression_report_json_with_recorded_stages(tmp_path):
+    """Regression: `report --json` crashed with AttributeError on any manifest
+    that had recorded stages (#29 iterated the stages dict as a list of
+    objects), and read nonexistent `cost`/`commit` fields so cost was always
+    0.0 and commit always null. Must emit one entry per stage plus the real
+    total_cost_usd / commit_sha values. (The old test used empty stages, so
+    CI stayed green through the breakage.)
+    """
     import json
 
-  
     manifest_data = {
         "run_id": "test-run-123",
         "verified": True,
-        "cost": 1.50,
-        "repo_commit": "abcdef123456",
-        "stages": {}
+        "total_cost_usd": 1.5,
+        "commit_sha": "abcdef123456",
+        "stages": {
+            "ingest": {"status": "completed"},
+            "agent": {"status": "failed"},
+        },
     }
-    manifest_file = tmp_path / "manifest.json"
-    manifest_file.write_text(json.dumps(manifest_data))
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
 
     result = runner.invoke(app, ["report", str(tmp_path), "--json"])
-    
+
     assert result.exit_code == 0
-    
-    parsed_output = json.loads(result.output)
-    
-    assert parsed_output["verified"] is True
-    assert parsed_output["cost"] == 0.0
-    assert "commit" in parsed_output
+    parsed = json.loads(result.output)
+    assert parsed["verified"] is True
+    assert parsed["cost"] == 1.5
+    assert parsed["commit"] == "abcdef123456"
+    assert {"name": "ingest", "status": "completed"} in parsed["stages"]
+    assert {"name": "agent", "status": "failed"} in parsed["stages"]
     
