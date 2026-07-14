@@ -147,8 +147,17 @@ def _verified_line(verified: bool, base_image: str, commit_sha: str | None) -> s
 
 
 def _repo_name(repo_url: str) -> str:
-    """`https://github.com/owner/repo` → `owner/repo` (best effort)."""
-    parts = repo_url.rstrip("/").removesuffix(".git").split("/")
+    """`https://github.com/owner/repo` → `owner/repo` (best effort).
+
+    Git also accepts scp-style URLs such as
+    ``git@github.com:owner/repo.git``. Normalize the host/path separator
+    before extracting the final owner/repository pair so those URLs produce
+    the same name as their HTTPS equivalents.
+    """
+    value = repo_url.rstrip("/").removesuffix(".git")
+    if "://" not in value and ":" in value:
+        value = value.rsplit(":", 1)[-1]
+    parts = value.split("/")
     return "/".join(parts[-2:]) if len(parts) >= 2 else repo_url
 
 
