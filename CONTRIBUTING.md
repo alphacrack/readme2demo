@@ -26,7 +26,7 @@ Code install (`--llm-backend claude-cli` + `CLAUDE_CODE_OAUTH_TOKEN`), an
 ## Layout
 
 Pipeline stages live in `src/readme2demo/`, one module per stage:
-`ingest → agent → normalize → distill → verify → render → tutorial`,
+`ingest → agent → normalize → distill → verify → tutorial → render`,
 orchestrated by `orchestrator.py` over a crash-safe manifest. Agent backends
 are plugins under `engines/`. Prompts are markdown files under `prompts/`;
 tape/tutorial layouts are jinja templates under `templates/`.
