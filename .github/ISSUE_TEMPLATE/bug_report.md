@@ -23,7 +23,7 @@ cost included. The more of it you paste, the faster this gets fixed.
 
 ## Which stage failed
 
-<!-- From manifest.json: ingest / agent / normalize / distill / verify / render / tutorial -->
+<!-- From manifest.json: ingest / agent / normalize / distill / verify / tutorial / render -->
 
 ## Artifacts (please attach or paste)
 
