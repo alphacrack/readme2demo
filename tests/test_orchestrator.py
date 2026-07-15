@@ -167,3 +167,23 @@ def test_reset_from_after_verify_keeps_verdict(tmp_path: Path):
     assert m.verified is True
     m.reset_from("verify")
     assert m.verified is False
+
+
+def test_dry_run_stops_after_ingest(tmp_path: Path, monkeypatch):
+    # --dry-run: feasibility verdict lands in the manifest, every later stage
+    # is skipped with a clear reason, and no agent stage ever starts.
+    cfg = Config(runs_dir=tmp_path, dry_run=True)
+    orch = Orchestrator.new_run("https://github.com/x/y", cfg)
+
+    def fake_ingest(repo_url, run_dir, model, **kwargs):
+        plan = make_plan(feasible=True)
+        (run_dir / "plan.json").write_text(plan.model_dump_json())
+        return plan, "abc1234", 0.005
+
+    monkeypatch.setattr(ingest_mod, "ingest", fake_ingest)
+    manifest = orch.run()
+    assert manifest.stages["ingest"].status == "completed"
+    for s in ("agent", "normalize", "distill", "verify", "render", "tutorial"):
+        assert manifest.stages[s].status == "skipped"
+        assert manifest.stages[s].meta.get("reason") == "dry-run stop"
+    assert manifest.verified is False

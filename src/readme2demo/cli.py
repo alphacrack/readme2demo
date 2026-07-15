@@ -335,6 +335,11 @@ def run(
              "else the config default.",
     ),
     config_file: Optional[Path] = typer.Option(None, "--config", help="readme2demo.toml path"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Run ingest/plan only and print feasibility/blockers, then stop "
+             "— a cheap feasibility check before spending agent time.",
+    ),
 ) -> None:
     """Run the full pipeline against a repository, a step-by-step guide, or both."""
     repo_url = _resolve_repo(repo_url, github_repo, step_by_step)
@@ -349,6 +354,8 @@ def run(
         config_file, engine, model, output_dir, timeout,
         budget_usd, max_turns, skip_video, base_image, llm_backend,
     )
+    if dry_run:
+        cfg = cfg.model_copy(update={"dry_run": True})
     if step_by_step is not None:
         cfg = cfg.model_copy(update={"step_by_step": step_by_step})
     if repo_url is None:

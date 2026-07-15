@@ -28,7 +28,6 @@ class Config(BaseModel):
 
     # Sandbox
     base_image: str = "readme2demo/base:latest"
-    vhs_image: str = "ghcr.io/charmbracelet/vhs:latest"
     network: str = "bridge"
     # SECURITY TRADEOFF, off by default: mount the host Docker socket into the
     # agent/verify/render containers. Required for tools whose demos manage
@@ -40,6 +39,9 @@ class Config(BaseModel):
     pids_limit: int = 512
 
     # Stages
+    # --dry-run: stop after ingest/planning (feasibility verdict + blockers),
+    # skipping the paid agent stage and everything downstream.
+    dry_run: bool = False
     verify_timeout_s: int = 900
     verify_retries: int = 1  # plain script retries before distiller feedback loop
     distill_retries: int = 1  # distiller feedback loops on verify failure

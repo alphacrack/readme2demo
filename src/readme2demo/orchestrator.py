@@ -332,6 +332,19 @@ class Orchestrator:
             except Exception as e:  # noqa: BLE001 — record, then re-raise
                 self.manifest.stage_fail(stage, f"{type(e).__name__}: {e}")
                 raise
+
+            # --dry-run: the feasibility verdict and blockers are known once
+            # ingest completes; stop before any agent cost is spent and mark
+            # the remaining stages skipped with a clear reason.
+            if stage == "ingest" and self.cfg.dry_run:
+                console.print(
+                    "\n[bold yellow]ℹ Dry run: stopping after ingest/planning.[/]"
+                )
+                for s in ("agent", "normalize", "distill", "verify", "render", "tutorial"):
+                    if self.manifest.stages[s].status != "completed":
+                        self.manifest.stage_skip(s, reason="dry-run stop")
+                break
+
         return self.manifest
 
 
