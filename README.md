@@ -126,7 +126,7 @@ skip_video = false
 ## Development
 
 ```bash
-python -m pytest tests/ -q            # 175 unit tests, no docker/network needed
+python -m pytest tests/ -q            # comprehensive unit test suite, no docker/network needed
 ruff check src/ tests/               # correctness lint (matches CI)
 python -m pytest -m integration      # requires docker + API keys (none yet)
 ```
