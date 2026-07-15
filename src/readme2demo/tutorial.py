@@ -171,7 +171,7 @@ def seo_title(repo_url: str, fallback: str, suffix: str = "verified tutorial") -
 
 def seo_description(intro: str, max_len: int = 160) -> str:
     """First sentence of the intro, clamped to meta-description length."""
-    first = intro.split(". ")[0].strip().replace('"', "'")
+    first = " ".join(intro.split(". ")[0].split()).replace('"', "'")
     if not first.endswith("."):
         first += "."
     suffix = " Every command verified in a clean container."
