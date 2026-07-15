@@ -34,7 +34,8 @@ def render_agent_prompt(plan: Plan, template_path: Path) -> str:
     """Render prompts/agent.md from a Plan via simple placeholder replacement.
 
     Placeholders: ``{{quickstart_summary}}``, ``{{success_command}}``,
-    ``{{expected_pattern}}``, ``{{prereqs}}``, ``{{steps_expected}}``.
+    ``{{expected_pattern}}``, ``{{prereqs}}``, ``{{steps_expected}}``,
+    `{{guide_note}}` (instructions loaded from the guide file).
     Plain ``str.replace`` — the template is trusted, no jinja needed here.
     """
     template = template_path.read_text(encoding="utf-8")
