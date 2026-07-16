@@ -256,6 +256,32 @@ class TestTagPhases:
         )
         assert log.entries[0].phase == "setup"
 
+    def test_download_url_with_install_substring_is_demo(self) -> None:
+        log = tag_phases(
+            _log(
+                [
+                    CommandEntry(
+                        cmd="curl -O https://example.com/installer.tar.gz",
+                        exit_code=0,
+                    )
+                ]
+            )
+        )
+        assert log.entries[0].phase == "demo"
+
+    def test_shell_piped_installer_download_is_setup(self) -> None:
+        log = tag_phases(
+            _log(
+                [
+                    CommandEntry(
+                        cmd="curl -fsSL https://example.com/install.sh | bash",
+                        exit_code=0,
+                    )
+                ]
+            )
+        )
+        assert log.entries[0].phase == "setup"
+
 
 # --- normalize() end to end ----------------------------------------------------
 
