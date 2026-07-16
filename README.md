@@ -25,7 +25,7 @@ The value is not "AI writes a tutorial" — it's that the tutorial **ran, twice*
 ```
 repo URL → ingest/plan → agent run (in Docker) → normalize transcript
         → distill minimal path → VERIFY replay in fresh container
-        → render VHS video → generate tutorial.md + troubleshooting.md
+        → generate tutorial.md + troubleshooting.md → render VHS video
 ```
 
 See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full architecture.
