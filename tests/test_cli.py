@@ -292,6 +292,15 @@ def test_version_flag():
     assert result.output.strip() != ""
 
 
+def test_run_help_includes_output_dir_short_alias():
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    assert any(
+        "-o" in line and "--output-dir" in line
+        for line in result.output.splitlines()
+    )
+
+
 # -- regression: run glow-20260710-162012 (missing SDK + Rich-eaten hint) -----------
 
 
