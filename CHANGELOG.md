@@ -5,6 +5,48 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] — 2026-07-16
+
+### Fixed
+- scp-style repository URLs (`git@github.com:owner/repo.git`) normalize
+  correctly in SEO titles instead of leaking the `git@host:` prefix
+  (#121, thanks @hkJerryLeung).
+- `step_by_step.md` now carries a distinct SEO title from `tutorial.md`, so
+  the two published pages no longer compete for the same search snippet
+  (#134, thanks @cnYui).
+- Installer-URL phase tagging is word-anchored: URLs merely containing the
+  substring "install" (`installer.tar.gz`, `reinstall-notes.txt`) no longer
+  classify as setup steps (#122, thanks @hkJerryLeung).
+
+### Removed
+- Dead `Sandbox.commit()` method — zero call sites, no behavior change
+  (#82, thanks @professor314).
+
+### Changed
+- Docs: the documented pipeline stage order matches `manifest.STAGES`
+  (verify → tutorial → render) across README, CONTRIBUTING, ROADMAP, and the
+  bug-report template (#120, thanks @cnYui); README gained an auto-updating
+  contributors section (#136).
+- CI: bump `actions/setup-python` to 6 (#34) and `actions/download-artifact`
+  to 8 (#35) — the v4-upload/v8-download artifact pairing in release.yml is
+  cross-compatible (verified against the v8 compatibility matrix before
+  merge).
+
+## [0.6.1] — 2026-07-14
+
+Recorded retroactively: the `v0.6.1` tag was cut at commit `5ca0eda` without
+a version bump or changelog entry, so its GitHub Release shipped placeholder
+notes and the built wheel self-reports 0.6.0. Contents:
+
+### Fixed
+- VHS render timeout errors now name the image that actually ran instead of
+  the never-used stock VHS image, and the dead `vhs_image` config field is
+  gone — a stale `vhs_image` key in an existing `readme2demo.toml` is
+  silently tolerated (#81, thanks @sapunyangkut).
+
+### Changed
+- CI: bump `actions/configure-pages` to 6 (#33).
+
 ## [0.6.0] — 2026-07-12
 
 ### Added
