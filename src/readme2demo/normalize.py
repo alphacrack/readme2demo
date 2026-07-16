@@ -38,7 +38,7 @@ _SETUP_PAIRS = frozenset({("go", "install"), ("git", "clone")})
 _CHAIN_SPLIT_RE = re.compile(r"&&|;")
 
 # curl/wget count as setup only when piping into a shell or fetching installers.
-_DOWNLOAD_INSTALL_RE = re.compile(r"\|\s*(?:sudo\s+)?(?:ba|z)?sh\b|install")
+_DOWNLOAD_INSTALL_RE = re.compile(r"\|\s*(?:sudo\s+)?(?:ba|z)?sh\b|\binstall\b")
 
 # Characters that make an `echo` non-trivial (redirects, pipes, substitution).
 _NONTRIVIAL_ECHO_RE = re.compile(r"[|>`]|\$\(")
