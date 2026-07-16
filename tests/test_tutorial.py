@@ -368,11 +368,29 @@ def test_seo_title_and_description():
     assert seo_title("https://github.com/stacklok/toolhive", "fallback") == (
         "How to install and run stacklok/toolhive — verified tutorial"
     )
+    assert seo_title(
+        "https://github.com/stacklok/toolhive", "fallback", "step-by-step commands"
+    ) == "How to install and run stacklok/toolhive — step-by-step commands"
     assert seo_title("", "My fallback") == "My fallback"
     desc = seo_description("ToolHive manages MCP servers. It does more things.")
     assert desc.startswith("ToolHive manages MCP servers.")
     assert len(desc) <= 160
     assert len(seo_description("x" * 400)) <= 160
+
+
+@pytest.mark.parametrize(
+    ("repo_url", "expected"),
+    [
+        ("https://github.com/owner/repo", "owner/repo"),
+        ("https://github.com/owner/repo.git", "owner/repo"),
+        ("https://github.com/owner/repo/", "owner/repo"),
+        ("git@github.com:owner/repo.git", "owner/repo"),
+    ],
+)
+def test_repo_name_normalizes_git_url_forms(repo_url, expected):
+    from readme2demo.tutorial import _repo_name
+
+    assert _repo_name(repo_url) == expected
 
 
 def test_tutorial_md_front_matter_and_provenance(tmp_path, monkeypatch):
@@ -421,6 +439,7 @@ def test_tutorial_md_front_matter_and_provenance(tmp_path, monkeypatch):
     # generated step_by_step.md carries front matter too
     sbs = (tmp_path / "step_by_step.md").read_text()
     assert sbs.startswith("---\n")
+    assert 'title: "How to install and run stacklok/toolhive — step-by-step commands"' in sbs
     assert "generator: readme2demo" in sbs
 
 
