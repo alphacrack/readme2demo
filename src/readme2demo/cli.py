@@ -378,7 +378,10 @@ def run(
 
 @app.command()
 def resume(
-    run_dir: Path = typer.Argument(..., help="Path to an existing runs/<run-id> directory"),
+    run_dir: Path = typer.Argument(
+        ..., exists=True, file_okay=False,
+        help="Path to an existing runs/<run-id> directory",
+    ),
     from_stage: Optional[str] = typer.Option(
         None, "--from-stage", help=f"Re-run from this stage: {', '.join(STAGES)}"
     ),

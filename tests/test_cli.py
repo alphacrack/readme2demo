@@ -292,6 +292,21 @@ def test_version_flag():
     assert result.output.strip() != ""
 
 
+def test_resume_rejects_missing_run_dir(tmp_path):
+    missing = tmp_path / "missing-run"
+    result = runner.invoke(app, ["resume", str(missing)])
+    assert result.exit_code != 0
+    assert "does not exist" in result.output
+
+
+def test_resume_rejects_file_run_dir(tmp_path):
+    file_path = tmp_path / "not-a-run-dir"
+    file_path.write_text("not a directory")
+    result = runner.invoke(app, ["resume", str(file_path)])
+    assert result.exit_code != 0
+    assert "directory" in result.output.lower()
+
+
 # -- regression: run glow-20260710-162012 (missing SDK + Rich-eaten hint) -----------
 
 
