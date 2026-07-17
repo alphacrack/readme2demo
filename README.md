@@ -25,7 +25,7 @@ The value is not "AI writes a tutorial" — it's that the tutorial **ran, twice*
 ```
 repo URL → ingest/plan → agent run (in Docker) → normalize transcript
         → distill minimal path → VERIFY replay in fresh container
-        → render VHS video → generate tutorial.md + troubleshooting.md
+        → generate tutorial.md + troubleshooting.md → render VHS video
 ```
 
 See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full architecture.
@@ -145,3 +145,14 @@ Full threat model and private vulnerability reporting: [SECURITY.md](SECURITY.md
 - [Architecture](architecture/README.md) — stage boundaries and diagrams
 
 MIT licensed. The CLI and verification pipeline are, and will stay, free and open source.
+
+## Contributors
+
+A huge thank you to everyone who has contributed to readme2demo!
+
+[![Contributors](https://img.shields.io/github/contributors/Rahul-pamula/readme2demo?style=flat-square)](https://github.com/Rahul-pamula/readme2demo/graphs/contributors)
+
+<a href="https://github.com/Rahul-pamula/readme2demo/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Rahul-pamula/readme2demo" alt="Contributors" />
+</a>
+

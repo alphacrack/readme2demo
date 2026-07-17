@@ -7,7 +7,7 @@ that a fresh container didn't independently execute.**
 
 ## Now (0.x, the MVP that shipped)
 
-- Core pipeline: `ingest → agent → normalize → distill → verify → render → tutorial`, crash-safe and resumable per stage.
+- Core pipeline: `ingest → agent → normalize → distill → verify → tutorial → render`, crash-safe and resumable per stage.
 - Claude Code as the default in-sandbox agent engine; OpenHands as an experimental opt-in.
 - Hardened Docker sandbox as the security boundary (cap-drop, no-new-privileges, non-root, resource caps).
 - Verified `tutorial.md`, `step_by_step.md`, `troubleshooting.md`, `commands.sh`, `howto.jsonld`, and a VHS `demo.mp4` / `demo.gif` — every run reproducible from its `manifest.json`.

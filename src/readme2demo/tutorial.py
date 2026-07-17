@@ -147,16 +147,25 @@ def _verified_line(verified: bool, base_image: str, commit_sha: str | None) -> s
 
 
 def _repo_name(repo_url: str) -> str:
-    """`https://github.com/owner/repo` → `owner/repo` (best effort)."""
-    parts = repo_url.rstrip("/").removesuffix(".git").split("/")
+    """`https://github.com/owner/repo` → `owner/repo` (best effort).
+
+    Git also accepts scp-style URLs such as
+    ``git@github.com:owner/repo.git``. Normalize the host/path separator
+    before extracting the final owner/repository pair so those URLs produce
+    the same name as their HTTPS equivalents.
+    """
+    value = repo_url.rstrip("/").removesuffix(".git")
+    if "://" not in value and ":" in value:
+        value = value.rsplit(":", 1)[-1]
+    parts = value.split("/")
     return "/".join(parts[-2:]) if len(parts) >= 2 else repo_url
 
 
-def seo_title(repo_url: str, fallback: str) -> str:
+def seo_title(repo_url: str, fallback: str, suffix: str = "verified tutorial") -> str:
     """Query-shaped page title: matches how people actually search."""
     if not repo_url:
         return fallback
-    return f"How to install and run {_repo_name(repo_url)} — verified tutorial"
+    return f"How to install and run {_repo_name(repo_url)} — {suffix}"
 
 
 def seo_description(intro: str, max_len: int = 160) -> str:
@@ -504,9 +513,12 @@ def write_step_by_step(
         else "> ⚠️ UNVERIFIED — the clean-container replay did not pass; treat "
         "these steps as a best-effort record of a working session."
     )
+    step_by_step_title = seo_title(
+        repo_url, outline.title + " — step by step", "step-by-step commands"
+    )
     lines = [
         "---",
-        f'title: "{seo_title(repo_url, outline.title + " — step by step")}"',
+        f'title: "{step_by_step_title}"',
         f'description: "{seo_description(outline.intro)}"',
         f"date: {today}",
         f"verified: {'true' if verified else 'false'}",

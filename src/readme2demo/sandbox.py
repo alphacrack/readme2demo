@@ -166,13 +166,6 @@ class Sandbox:
         if not res.ok:
             raise SandboxError(f"docker cp out failed: {res.output.strip()}")
 
-    def commit(self, tag: str) -> str:
-        """Snapshot the container (used for the post-setup render checkpoint)."""
-        res = self._run(["docker", "commit", self.name, tag], timeout=300)
-        if not res.ok:
-            raise SandboxError(f"docker commit failed: {res.output.strip()}")
-        return tag
-
     def destroy(self) -> None:
         if self._started:
             self._run(["docker", "rm", "-f", self.name], timeout=60)
