@@ -134,7 +134,8 @@ def _candidate_doc_files(repo_dir: Path) -> list[Path]:
 def collect_docs(repo_dir: Path, max_bytes: int = 50_000) -> str:
     """Concatenate candidate docs with ``--- FILE: <relpath> ---`` headers.
 
-    READMEs come first, then ``docs/**/*.md`` in sorted order. Total output is
+    A step-by-step guide in the repo directory comes first when present,
+    followed by READMEs, then ``docs/**/*.md`` in sorted order. Total output is
     capped at ``max_bytes`` (UTF-8): the file that would exceed the budget is
     cut at a character boundary and closed with a ``[truncated]`` marker; any
     remaining files are dropped.
