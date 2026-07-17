@@ -792,7 +792,7 @@ def test_regression_agent_stderr_copied_to_run_dir(tmp_path, monkeypatch):
             pass
 
         def copy_out(self, src, dst):
-            if src.endswith("agent.stderr"):
+            if src == agent_mod.STDERR_CONTAINER_PATH:
                 dst.write_text("the real server error, in full")
             else:
                 raise SandboxError("no transcript")  # agent produced none

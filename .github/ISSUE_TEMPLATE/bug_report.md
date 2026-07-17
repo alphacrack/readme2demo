@@ -42,7 +42,8 @@ cost included. The more of it you paste, the faster this gets fixed.
 - readme2demo version / commit:
 - OS + arch:
 - Docker version:
-- Backend: `--llm-backend` value (api / claude-cli / openhands)
+- Backend: `--llm-backend` value (auto / api / claude-cli / gemini / openai)
+- Engine: `--engine` value (claude-code / openhands)
 
 ## Anything else
 

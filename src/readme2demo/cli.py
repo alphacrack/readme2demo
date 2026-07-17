@@ -334,7 +334,10 @@ def run(
              "`--anthropic` uses --model, else the ANTHROPIC_MODEL env var, "
              "else the config default.",
     ),
-    config_file: Optional[Path] = typer.Option(None, "--config", help="readme2demo.toml path"),
+    config_file: Optional[Path] = typer.Option(
+        None, "--config", help="readme2demo.toml path",
+        exists=True, dir_okay=False, resolve_path=True,
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run",
         help="Run ingest/plan only and print feasibility/blockers, then stop "
@@ -378,7 +381,10 @@ def run(
 
 @app.command()
 def resume(
-    run_dir: Path = typer.Argument(..., help="Path to an existing runs/<run-id> directory"),
+    run_dir: Path = typer.Argument(
+        ..., exists=True, file_okay=False,
+        help="Path to an existing runs/<run-id> directory",
+    ),
     from_stage: Optional[str] = typer.Option(
         None, "--from-stage", help=f"Re-run from this stage: {', '.join(STAGES)}"
     ),
@@ -405,7 +411,9 @@ def resume(
              "the config default. See `readme2demo run --help`.",
     ),
     allow_docker_socket: bool = typer.Option(False, "--allow-docker-socket"),
-    config_file: Optional[Path] = typer.Option(None, "--config"),
+    config_file: Optional[Path] = typer.Option(
+        None, "--config", exists=True, dir_okay=False, resolve_path=True
+    ),
 ) -> None:
     """Resume an interrupted run (optionally re-running from a given stage)."""
     if from_stage and from_stage not in STAGES:

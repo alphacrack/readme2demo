@@ -5,6 +5,72 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] — 2026-07-17
+
+### Fixed
+- `readme2demo resume` rejects a nonexistent or non-directory run dir at
+  argument parsing with a clear message instead of failing mid-stage with a
+  raw traceback (#133, thanks @ulises-jeremias).
+- `--config` pointing at a missing file is now a hard error instead of being
+  silently ignored and falling back to defaults — both the `run` and
+  `resume` paths are covered (#127, thanks @pollychen-lab).
+- The bug-report issue template lists the real `--llm-backend` values
+  (`auto`, `api`, `claude-cli`, `gemini`, `openai`) and engine names
+  (`claude-code`, `openhands`), so reports arrive with usable repro fields
+  (#131, thanks @ulises-jeremias).
+
+### Changed
+- Docstring accuracy: `collect_docs` documents the guide-first ordering it
+  actually implements (#130), the VHS GIF-preview docstring no longer
+  renders a literal `{GIF_PREVIEW_SECONDS}` (#128) (both thanks
+  @ulises-jeremias), and the agent prompt-builder docstring documents the
+  `{guide_note}` placeholder (#126, thanks @veronica-foltz).
+- The agent stderr container path is a module-level constant shared by both
+  derivation sites instead of being built twice inline (#129, thanks
+  @ulises-jeremias).
+
+## [0.6.2] — 2026-07-16
+
+### Fixed
+- scp-style repository URLs (`git@github.com:owner/repo.git`) normalize
+  correctly in SEO titles instead of leaking the `git@host:` prefix
+  (#121, thanks @hkJerryLeung).
+- `step_by_step.md` now carries a distinct SEO title from `tutorial.md`, so
+  the two published pages no longer compete for the same search snippet
+  (#134, thanks @cnYui).
+- Installer-URL phase tagging is word-anchored: URLs merely containing the
+  substring "install" (`installer.tar.gz`, `reinstall-notes.txt`) no longer
+  classify as setup steps (#122, thanks @hkJerryLeung).
+
+### Removed
+- Dead `Sandbox.commit()` method — zero call sites, no behavior change
+  (#82, thanks @professor314).
+
+### Changed
+- Docs: the documented pipeline stage order matches `manifest.STAGES`
+  (verify → tutorial → render) across README, CONTRIBUTING, ROADMAP, and the
+  bug-report template (#120, thanks @cnYui); README gained an auto-updating
+  contributors section (#136).
+- CI: bump `actions/setup-python` to 6 (#34) and `actions/download-artifact`
+  to 8 (#35) — the v4-upload/v8-download artifact pairing in release.yml is
+  cross-compatible (verified against the v8 compatibility matrix before
+  merge).
+
+## [0.6.1] — 2026-07-14
+
+Recorded retroactively: the `v0.6.1` tag was cut at commit `5ca0eda` without
+a version bump or changelog entry, so its GitHub Release shipped placeholder
+notes and the built wheel self-reports 0.6.0. Contents:
+
+### Fixed
+- VHS render timeout errors now name the image that actually ran instead of
+  the never-used stock VHS image, and the dead `vhs_image` config field is
+  gone — a stale `vhs_image` key in an existing `readme2demo.toml` is
+  silently tolerated (#81, thanks @sapunyangkut).
+
+### Changed
+- CI: bump `actions/configure-pages` to 6 (#33).
+
 ## [0.6.0] — 2026-07-12
 
 ### Added
