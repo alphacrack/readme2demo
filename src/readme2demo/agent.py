@@ -24,6 +24,9 @@ from readme2demo.types import Plan
 
 # How much of the agent's stderr to include in error messages.
 _STDERR_TAIL_BYTES = 2000
+STDERR_CONTAINER_PATH = posixpath.join(
+    posixpath.dirname(TRANSCRIPT_CONTAINER_PATH), "agent.stderr"
+)
 
 
 class AgentRunError(RuntimeError):
@@ -133,12 +136,9 @@ def run_agent(run_dir: Path, plan: Plan, engine: AgentEngine, cfg: Config) -> Pa
         # Always pull the agent's full log to the host BEFORE the sandbox is
         # destroyed — a 2KB stderr tail once hid the real server error behind
         # a client-side traceback, leaving nothing to diagnose with.
-        stderr_container = posixpath.join(
-            posixpath.dirname(TRANSCRIPT_CONTAINER_PATH), "agent.stderr"
-        )
         host_stderr = run_dir / "agent.stderr"
         try:
-            sandbox.copy_out(stderr_container, host_stderr)
+            sandbox.copy_out(STDERR_CONTAINER_PATH, host_stderr)
         except SandboxError:
             pass  # best-effort; the tail read below still works
 
@@ -165,12 +165,9 @@ def run_agent(run_dir: Path, plan: Plan, engine: AgentEngine, cfg: Config) -> Pa
 
 def _read_stderr_tail(sandbox: Sandbox) -> str:
     """Best-effort tail of the agent's stderr file for error reporting."""
-    stderr_container = posixpath.join(
-        posixpath.dirname(TRANSCRIPT_CONTAINER_PATH), "agent.stderr"
-    )
     try:
         res = sandbox.exec(
-            f"tail -c {_STDERR_TAIL_BYTES} {stderr_container} 2>/dev/null || true",
+            f"tail -c {_STDERR_TAIL_BYTES} {STDERR_CONTAINER_PATH} 2>/dev/null || true",
             timeout=30,
         )
         return res.output.strip() or "(empty)"
