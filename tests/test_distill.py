@@ -8,6 +8,7 @@ run_distiller retry-on-violation loop with a monkeypatched LLM.
 from __future__ import annotations
 
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -291,7 +292,12 @@ def test_commands_sh_guide_only_omits_clone_preamble(tmp_path: Path) -> None:
     assert 'echo "R2D_VERIFY_OK"' in text
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="commands.sh targets POSIX containers; NTFS has no executable bit",
+)
 def test_commands_sh_is_executable(artifacts) -> None:
+    """Regression (#144, reported in #82): executable bits are meaningless on NTFS."""
     run_dir, _, _ = artifacts
     mode = (run_dir / "commands.sh").stat().st_mode
     assert mode & stat.S_IXUSR
