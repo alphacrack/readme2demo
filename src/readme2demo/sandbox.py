@@ -88,10 +88,10 @@ class Sandbox:
         try:
             if stream_to is not None:
                 with open(stream_to, "ab") as sink:
-                    proc = subprocess.run(
+                    streamed = subprocess.run(
                         cmd, stdout=sink, stderr=subprocess.STDOUT, timeout=timeout
                     )
-                return ExecResult(proc.returncode, f"(streamed to {stream_to})")
+                return ExecResult(streamed.returncode, f"(streamed to {stream_to})")
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout, errors="replace"
             )
