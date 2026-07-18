@@ -64,6 +64,8 @@ class Config(BaseModel):
         """
         data: dict[str, Any] = {}
         path = toml_path or Path("readme2demo.toml")
+        if toml_path is not None and not path.exists():
+            raise FileNotFoundError(f"Config file not found: {path}")
         if path.exists() and tomllib is not None:
             with open(path, "rb") as f:
                 data.update(tomllib.load(f))

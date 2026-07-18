@@ -286,6 +286,22 @@ def test_unknown_engine_passes_through():
     assert cfg.base_image == "readme2demo/base:latest"  # preflight reports the engine
 
 
+def test_explicit_missing_config_file_raises(tmp_path):
+    from readme2demo.config import Config
+
+    with pytest.raises(FileNotFoundError, match="Config file not found"):
+        Config.load(toml_path=tmp_path / "missing.toml")
+
+
+def test_run_rejects_missing_config_file_before_preflight(tmp_path):
+    missing = tmp_path / "missing.toml"
+
+    result = runner.invoke(app, ["run", _URL, "--config", str(missing)])
+
+    assert result.exit_code != 0
+    assert "does not exist" in result.output
+
+
 def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
@@ -299,6 +315,21 @@ def test_run_help_includes_output_dir_short_alias():
         "-o" in line and "--output-dir" in line
         for line in result.output.splitlines()
     )
+
+
+def test_resume_rejects_missing_run_dir(tmp_path):
+    missing = tmp_path / "missing-run"
+    result = runner.invoke(app, ["resume", str(missing)])
+    assert result.exit_code != 0
+    assert "does not exist" in result.output
+
+
+def test_resume_rejects_file_run_dir(tmp_path):
+    file_path = tmp_path / "not-a-run-dir"
+    file_path.write_text("not a directory")
+    result = runner.invoke(app, ["resume", str(file_path)])
+    assert result.exit_code != 0
+    assert "directory" in result.output.lower()
 
 
 # -- regression: run glow-20260710-162012 (missing SDK + Rich-eaten hint) -----------
