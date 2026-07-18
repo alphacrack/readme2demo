@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] — 2026-07-18
+
+Internal quality release: no user-facing behavior changes.
+
+### Added
+- Trust-boundary test suite (#151): 70 tests covering the modules that are
+  the security/verification story. Every sandbox hardening flag now has a
+  named test — the "never weaken hardening flags" rule is executable — and
+  the clean-room replay is pinned as the only source of "verified"
+  (fresh sandbox per attempt, no agent state, marker + exit code both
+  required, no marker leakage across attempts).
+- CI: coverage ratchet at 80% (measured floor) on the 3.12 leg and a mypy
+  type-check job gating at zero errors (#152). The handful of src touches
+  required are annotation-only or provably behavior-identical; grounding
+  paths audited.
+
 ## [0.6.3] — 2026-07-17
 
 ### Fixed
