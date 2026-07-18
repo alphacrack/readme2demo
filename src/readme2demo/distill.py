@@ -352,7 +352,7 @@ def _grep_flags_and_pattern(pattern: str) -> tuple[str, str]:
     return "-qE", pattern
 
 
-def _tolerate_findings_steps(commands: list[str], log: CommandLog) -> list[str]:
+def _tolerate_findings_steps(commands: list[str], log: CommandLog | None) -> list[str]:
     """Append ``|| true`` to step commands that legitimately exit nonzero.
 
     ``commands.sh`` runs under ``set -e``, but findings tools (drift detectors,

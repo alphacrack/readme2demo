@@ -128,7 +128,12 @@ def _candidate_doc_files(repo_dir: Path) -> list[Path]:
     )
     ordered = ([guide] if guide else []) + readmes + docs
     seen: set[Path] = set()
-    return [p for p in ordered if not (p in seen or seen.add(p))]
+    unique: list[Path] = []
+    for p in ordered:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return unique
 
 
 def collect_docs(repo_dir: Path, max_bytes: int = 50_000) -> str:
