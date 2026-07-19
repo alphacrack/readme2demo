@@ -124,6 +124,15 @@ class TestPrecedence:
 
 
 class TestUnknownKeys:
+    def test_stale_vhs_image_is_accepted_with_deprecation_warning(
+        self, tmp_path: Path
+    ) -> None:
+        toml = _write_toml(tmp_path / "r2d.toml", 'vhs_image = "old/image:tag"\n')
+        with pytest.warns(DeprecationWarning, match="vhs_image.*deprecated"):
+            cfg = Config.load(toml)
+        assert cfg.base_image == "readme2demo/base:latest"
+        assert "vhs_image" not in cfg.model_dump()
+
     def test_unknown_toml_key_raises(self, tmp_path: Path) -> None:
         toml = _write_toml(tmp_path / "r2d.toml", 'does_not_exist = "x"\nmax_turns = 5\n')
         with pytest.raises(ValidationError, match="does_not_exist"):
