@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-07-19
+
+readme2demo is on PyPI: `pip install readme2demo`.
+
+### Added
+- The release workflow publishes to PyPI on every tag via Trusted
+  Publishing (OIDC) — no tokens or stored secrets anywhere (#176,
+  closes #175).
+
+### Fixed
+- README renders correctly on the PyPI project page: all 14 relative
+  links/images converted to absolute URLs, and the dead
+  `IMPLEMENTATION_PLAN.md` link (file removed in v0.6.0) repointed to
+  `architecture/README.md` (#176).
+
 ## [0.7.0] — 2026-07-19
 
 The GitHub Action release: readme2demo can now sit in CI and turn "the

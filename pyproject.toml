@@ -1,6 +1,6 @@
 [project]
 name = "readme2demo"
-version = "0.7.0"
+version = "0.7.1"
 description = "Verified tutorials and demo videos from your README. An AI agent runs it in a hardened Docker sandbox and replays it in a fresh container before anything is published."
 readme = "README.md"
 requires-python = ">=3.10"
