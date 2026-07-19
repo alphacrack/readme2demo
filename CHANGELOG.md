@@ -5,6 +5,46 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] — 2026-07-18
+
+Internal quality release: no user-facing behavior changes.
+
+### Added
+- Trust-boundary test suite (#151): 70 tests covering the modules that are
+  the security/verification story. Every sandbox hardening flag now has a
+  named test — the "never weaken hardening flags" rule is executable — and
+  the clean-room replay is pinned as the only source of "verified"
+  (fresh sandbox per attempt, no agent state, marker + exit code both
+  required, no marker leakage across attempts).
+- CI: coverage ratchet at 80% (measured floor) on the 3.12 leg and a mypy
+  type-check job gating at zero errors (#152). The handful of src touches
+  required are annotation-only or provably behavior-identical; grounding
+  paths audited.
+
+## [0.6.3] — 2026-07-17
+
+### Fixed
+- `readme2demo resume` rejects a nonexistent or non-directory run dir at
+  argument parsing with a clear message instead of failing mid-stage with a
+  raw traceback (#133, thanks @ulises-jeremias).
+- `--config` pointing at a missing file is now a hard error instead of being
+  silently ignored and falling back to defaults — both the `run` and
+  `resume` paths are covered (#127, thanks @pollychen-lab).
+- The bug-report issue template lists the real `--llm-backend` values
+  (`auto`, `api`, `claude-cli`, `gemini`, `openai`) and engine names
+  (`claude-code`, `openhands`), so reports arrive with usable repro fields
+  (#131, thanks @ulises-jeremias).
+
+### Changed
+- Docstring accuracy: `collect_docs` documents the guide-first ordering it
+  actually implements (#130), the VHS GIF-preview docstring no longer
+  renders a literal `{GIF_PREVIEW_SECONDS}` (#128) (both thanks
+  @ulises-jeremias), and the agent prompt-builder docstring documents the
+  `{guide_note}` placeholder (#126, thanks @veronica-foltz).
+- The agent stderr container path is a module-level constant shared by both
+  derivation sites instead of being built twice inline (#129, thanks
+  @ulises-jeremias).
+
 ## [0.6.2] — 2026-07-16
 
 ### Fixed

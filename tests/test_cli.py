@@ -286,10 +286,41 @@ def test_unknown_engine_passes_through():
     assert cfg.base_image == "readme2demo/base:latest"  # preflight reports the engine
 
 
+def test_explicit_missing_config_file_raises(tmp_path):
+    from readme2demo.config import Config
+
+    with pytest.raises(FileNotFoundError, match="Config file not found"):
+        Config.load(toml_path=tmp_path / "missing.toml")
+
+
+def test_run_rejects_missing_config_file_before_preflight(tmp_path):
+    missing = tmp_path / "missing.toml"
+
+    result = runner.invoke(app, ["run", _URL, "--config", str(missing)])
+
+    assert result.exit_code != 0
+    assert "does not exist" in result.output
+
+
 def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert result.output.strip() != ""
+
+
+def test_resume_rejects_missing_run_dir(tmp_path):
+    missing = tmp_path / "missing-run"
+    result = runner.invoke(app, ["resume", str(missing)])
+    assert result.exit_code != 0
+    assert "does not exist" in result.output
+
+
+def test_resume_rejects_file_run_dir(tmp_path):
+    file_path = tmp_path / "not-a-run-dir"
+    file_path.write_text("not a directory")
+    result = runner.invoke(app, ["resume", str(file_path)])
+    assert result.exit_code != 0
+    assert "directory" in result.output.lower()
 
 
 # -- regression: run glow-20260710-162012 (missing SDK + Rich-eaten hint) -----------
@@ -383,7 +414,7 @@ def test_regression_report_keeps_bracketed_error_text(tmp_path):
     }
     (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
     result = runner.invoke(app, ["report", str(tmp_path)])
-    assert result.exit_code == 0
+    assert result.exit_code == 2  # ingest failed → report signals it (#85)
     assert "readme2demo[openai]" in result.output
 
 def test_regression_report_json_with_recorded_stages(tmp_path):
@@ -410,11 +441,191 @@ def test_regression_report_json_with_recorded_stages(tmp_path):
 
     result = runner.invoke(app, ["report", str(tmp_path), "--json"])
 
-    assert result.exit_code == 0
+    # agent failed → exit 2 even though verified is (stale-)True (#85).
+    assert result.exit_code == 2
     parsed = json.loads(result.output)
     assert parsed["verified"] is True
     assert parsed["cost"] == 1.5
     assert parsed["commit"] == "abcdef123456"
     assert {"name": "ingest", "status": "completed"} in parsed["stages"]
     assert {"name": "agent", "status": "failed"} in parsed["stages"]
-    
+
+
+# -- report exit codes (#85) --------------------------------------------------
+# Regression: `report` exited 0 unconditionally — the JSON branch via
+# `raise typer.Exit(0)`, the human branch by falling off the end — so a CI
+# pipeline could not gate on it and had to parse output instead. Contract:
+# 0 = verified, 1 = completed UNVERIFIED (no stage failed), 2 = a stage failed.
+
+
+def _write_manifest(tmp_path, **overrides):
+    """Write a minimal manifest.json into ``tmp_path`` and return the dir."""
+    import json
+
+    data = {"run_id": "exitcode-test-run", **overrides}
+    (tmp_path / "manifest.json").write_text(json.dumps(data))
+    return tmp_path
+
+
+@pytest.mark.parametrize("json_flag", [[], ["--json"]], ids=["human", "json"])
+def test_report_exits_0_when_verified(tmp_path, json_flag):
+    """Regression (#85): verified runs exit 0 on both output branches."""
+    _write_manifest(
+        tmp_path,
+        verified=True,
+        stages={"ingest": {"status": "completed"}, "verify": {"status": "completed"}},
+    )
+    result = runner.invoke(app, ["report", str(tmp_path)] + json_flag)
+    assert result.exit_code == 0
+
+
+@pytest.mark.parametrize("json_flag", [[], ["--json"]], ids=["human", "json"])
+def test_report_exits_1_when_completed_unverified(tmp_path, json_flag):
+    """Regression (#85): no failed stage but verified=False → exit 1, so
+    scripts can distinguish "completed UNVERIFIED" from "run failed"."""
+    _write_manifest(
+        tmp_path,
+        verified=False,
+        stages={"ingest": {"status": "completed"}, "verify": {"status": "completed"}},
+    )
+    result = runner.invoke(app, ["report", str(tmp_path)] + json_flag)
+    assert result.exit_code == 1
+
+
+@pytest.mark.parametrize("json_flag", [[], ["--json"]], ids=["human", "json"])
+def test_report_exits_2_when_any_stage_failed(tmp_path, json_flag):
+    """Regression (#85): any failed stage → exit 2 on both output branches."""
+    _write_manifest(
+        tmp_path,
+        verified=False,
+        stages={"ingest": {"status": "completed"}, "agent": {"status": "failed"}},
+    )
+    result = runner.invoke(app, ["report", str(tmp_path)] + json_flag)
+    assert result.exit_code == 2
+
+
+def test_report_failed_stage_outranks_stale_verified(tmp_path):
+    """Regression (#85): verified=True with a failed stage still exits 2 — a
+    stale verdict from an earlier pass must not mask a later failure."""
+    _write_manifest(
+        tmp_path,
+        verified=True,
+        stages={"verify": {"status": "completed"}, "render": {"status": "failed"}},
+    )
+    result = runner.invoke(app, ["report", str(tmp_path)])
+    assert result.exit_code == 2
+
+
+def test_report_fresh_run_counts_as_unverified(tmp_path):
+    """Regression (#85): a run with only pending stages (nothing failed,
+    nothing verified) exits 1, not 0."""
+    _write_manifest(tmp_path, verified=False, stages={})
+    result = runner.invoke(app, ["report", str(tmp_path)])
+    assert result.exit_code == 1
+
+
+def test_report_json_still_prints_full_payload_on_nonzero_exit(tmp_path):
+    """Regression (#85): the nonzero exit must not swallow the JSON payload —
+    CI consumers read both."""
+    _write_manifest(
+        tmp_path,
+        verified=False,
+        total_cost_usd=0.5,
+        stages={"agent": {"status": "failed"}},
+    )
+    import json
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--json"])
+    assert result.exit_code == 2
+    parsed = json.loads(result.output)
+    assert parsed["verified"] is False
+    assert parsed["cost"] == 0.5
+
+
+
+# -- report --markdown (#140) -------------------------------------------------
+
+
+def test_report_markdown_emits_gfm_summary_with_present_artifacts(tmp_path):
+    import json
+
+    manifest_data = {
+        "run_id": "glow-20260710-162012-33fc72",
+        "repo_url": "https://github.com/charmbracelet/glow",
+        "commit_sha": "a531d7c9deadbeef",
+        "verified": True,
+        "total_cost_usd": 0.1234,
+        "stages": {
+            "ingest": {"status": "completed", "cost_usd": 0.0021},
+            "verify": {"status": "completed"},
+        },
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
+    # Only these two artifacts exist — the list must reflect reality.
+    (tmp_path / "tutorial.md").write_text("t")
+    (tmp_path / "demo.mp4").write_bytes(b"\x00")
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--markdown"])
+
+    assert result.exit_code == 0  # verified → 0 (#85 contract applies here too)
+    out = result.output
+    assert "## readme2demo — glow-20260710-162012-33fc72" in out
+    assert "**Verified: yes**" in out
+    assert "| Stage | Status | Cost (USD) | Notes |" in out
+    assert "| ingest | completed | 0.0021 |  |" in out
+    assert "- tutorial.md" in out
+    assert "- demo.mp4" in out
+    assert "- demo.gif" not in out  # not on disk → not claimed
+
+
+def test_report_markdown_table_survives_hostile_error_text(tmp_path):
+    import json
+
+    manifest_data = {
+        "run_id": "hostile-run",
+        "verified": False,
+        "stages": {
+            "agent": {
+                "status": "failed",
+                "error": "cmd | head\npip install 'readme2demo[openai]'",
+            }
+        },
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--markdown"])
+
+    assert result.exit_code == 2  # failed stage (#85 contract)
+    rows = [ln for ln in result.output.splitlines() if ln.startswith("| agent |")]
+    assert len(rows) == 1  # newline collapsed — one row
+    assert "\\|" in rows[0]  # pipe escaped — cell intact
+    # Plain print(), no Rich: [openai] must survive verbatim.
+    assert "readme2demo[openai]" in rows[0]
+
+
+def test_report_markdown_unverified_exit_1(tmp_path):
+    import json
+
+    manifest_data = {
+        "run_id": "unverified-run",
+        "verified": False,
+        "stages": {"verify": {"status": "completed"}},
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
+    result = runner.invoke(app, ["report", str(tmp_path), "--markdown"])
+    assert result.exit_code == 1
+    assert "**Verified: NO**" in result.output
+
+
+def test_report_json_and_markdown_are_mutually_exclusive(tmp_path):
+    import json
+
+    (tmp_path / "manifest.json").write_text(json.dumps({"run_id": "x"}))
+    result = runner.invoke(
+        app, ["report", str(tmp_path), "--json", "--markdown"]
+    )
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output
+    # A usage error, not silent precedence: neither format was emitted.
+    assert "Verified" not in result.output
+    assert '"stages"' not in result.output
