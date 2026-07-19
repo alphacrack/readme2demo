@@ -97,6 +97,38 @@ The repo is **optional**: pass it positionally or with `-gr/--github-repo`, supp
 
 Outputs land in `runs/<run-id>/`: `tutorial.md`, `step_by_step.md`, `troubleshooting.md`, `commands.sh`, `demo.tape`, `demo.mp4`, `demo.gif`, plus `manifest.json` with stage statuses and total cost.
 
+## GitHub Action — verify your README in CI
+
+Get a red X when your README stops working. The repo-root composite action installs readme2demo from its own pinned checkout, builds the sandbox image, runs the full pipeline against your repo's URL, and **fails the check when the fresh-container replay does not pass**:
+
+```yaml
+name: readme-check
+on:
+  push:
+    branches: [main]        # url mode tests the default branch HEAD — see the caveat below
+    paths: ["README.md"]
+  schedule:
+    - cron: "0 6 * * 1"     # weekly: catch the world changing under an unchanged README
+
+permissions:
+  contents: read
+
+jobs:
+  verify-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: alphacrack/readme2demo@main   # pin a tag or SHA once released
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          skip-video: "true"
+```
+
+> **⚠ URL mode only — this does NOT verify PR heads yet.** The action clones the **remote default branch HEAD** of `repo-url` (default: the repository running the workflow); ingestion accepts only https URLs, `--depth 1`, no ref pinning. On `pull_request` it would test the *base* branch's README — not the PR's — so don't wire it to PRs expecting a pre-merge verdict. Until [#74](https://github.com/alphacrack/readme2demo/issues/74) (local-path ingestion) lands, `on: push` to the default branch and a cron are the honest triggers; a `repo-path` input for real PR-head verification arrives with it.
+
+**Cost:** every run spends real agent money on your `ANTHROPIC_API_KEY` — typically a few dollars, hard-capped by `budget-usd` (default `"5"`; the run aborts if exceeded). The `paths:` filter plus a cron keeps spend proportional to README churn, and `skip-video: "true"` cuts wall-clock time (the render costs no API money either way).
+
+The check fails in two distinguishable ways, named in the step log: **README broken** (pipeline completed, clean-room replay failed — detected via `readme2demo report --json`, because `readme2demo run` deliberately exits 0 on a completed-but-unverified run) and **action infra broke** (nonzero pipeline exit: preflight, budget, Docker). Outputs: `verified` (`"true"`/`"false"`) and `run-dir`; `tutorial.md`, `step_by_step.md`, `verify.log` (and `demo.gif` when video is on) upload as the `readme2demo-run` artifact.
+
 ## step_by_step.md — the video's source
 
 The demo video is always built **from** `step_by_step.md`: its steps are parsed, and every demo-safe, grounded command becomes a typed command in the video with the step title shown as an on-screen comment. Three ways it comes to exist, in priority order:

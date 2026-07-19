@@ -1,0 +1,168 @@
+# readme2demo GitHub Action — verify that a repo's README actually runs.
+#
+# Why composite, not a Docker action (#148 settles the question #62 left open):
+# the pipeline itself drives `docker run` for the hardened agent sandbox, the
+# clean-room verify replay, and the VHS render. Wrapping readme2demo in a
+# Docker container action would mean docker-in-docker for zero benefit; a
+# composite runs it directly on the runner, which needs only Python, Docker,
+# and git — all present on ubuntu-latest. Living at the repo root so the short
+# `uses: alphacrack/readme2demo@<ref>` form works.
+#
+# v1 is URL mode only: ingestion accepts a remote https URL and makes a
+# depth-1 clone of the default branch HEAD (src/readme2demo/ingest.py — local
+# paths rejected, no ref pinning). On `pull_request` that would verify the
+# BASE branch's README, not the PR head. Checkout/PR mode is blocked on #74;
+# a `repo-path` input wired to the job workspace will be added when it lands.
+name: readme2demo
+description: >-
+  Run a repository's README inside a hardened Docker sandbox, replay the
+  distilled steps in a fresh container, and fail the check when the
+  clean-room replay does not pass.
+author: alphacrack
+
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  anthropic-api-key:
+    description: >-
+      Anthropic API key (metered billing). One secret drives both the
+      sandboxed agent and the planner/distiller/tutorial passes. Pass a repo
+      secret; prefer a dedicated low-limit key.
+    required: true
+  repo-url:
+    description: >-
+      https URL of the repo to verify (github.com / gitlab.com). Defaults to
+      the repository running the workflow. URL mode clones the remote default
+      branch HEAD — see the header comment.
+    required: false
+    default: ${{ github.server_url }}/${{ github.repository }}
+  budget-usd:
+    description: Abort the run if agent cost exceeds this many USD.
+    required: false
+    default: "5"
+  skip-video:
+    description: >-
+      "true" to skip the VHS demo video render. Saves wall-clock time; the
+      render itself costs no API money.
+    required: false
+    default: "false"
+  timeout:
+    description: >-
+      Agent wall-clock timeout in seconds. Empty means readme2demo's own
+      default applies.
+    required: false
+    default: ""
+
+outputs:
+  verified:
+    description: >-
+      "true" when the fresh-container replay passed, "false" when the run
+      completed unverified. Empty when the pipeline itself failed.
+    value: ${{ steps.check.outputs.verified }}
+  run-dir:
+    description: >-
+      Absolute path (on the runner) to the runs/<run-id> directory holding
+      manifest.json and all artifacts. Empty if the run failed before a run
+      directory was created.
+    value: ${{ steps.pipeline.outputs.run-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+
+    - name: Install readme2demo from the action checkout
+      # Not on PyPI yet (#19): installing from github.action_path means the
+      # `uses: ...@<ref>` the consumer pinned is exactly the code that runs.
+      shell: bash
+      env:
+        R2D_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        python -m pip install --quiet "$R2D_ACTION_PATH"
+
+    - name: Build the sandbox base image
+      # There is no published registry image: the local build is the only
+      # documented path (README "Install"; config.py defaults base_image to
+      # readme2demo/base:latest). Plain `docker build`, no GHA layer cache:
+      # cache-to/cache-from type=gha needs the Actions cache runtime env that
+      # composite steps don't receive without extra setup actions. Publishing
+      # the image to GHCR is the real speedup — a follow-up, out of scope
+      # per #148.
+      shell: bash
+      env:
+        R2D_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        docker build -t readme2demo/base:latest "$R2D_ACTION_PATH/images/base"
+
+    - name: Run readme2demo
+      # The ONLY step whose env carries the API key — it must never appear
+      # at job level or in any file the workflow uploads.
+      id: pipeline
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        R2D_REPO_URL: ${{ inputs.repo-url }}
+        R2D_BUDGET_USD: ${{ inputs.budget-usd }}
+        R2D_SKIP_VIDEO: ${{ inputs.skip-video }}
+        R2D_TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        set -u
+        # A fresh, unique runs dir per invocation: run-dir discovery below is
+        # then "the single subdirectory", with no reliance on naming or mtime.
+        out_dir="$(mktemp -d "$RUNNER_TEMP/readme2demo-runs.XXXXXX")"
+        args=(run "$R2D_REPO_URL" --output-dir "$out_dir" --budget-usd "$R2D_BUDGET_USD")
+        if [ "$R2D_SKIP_VIDEO" = "true" ]; then
+          args+=(--skip-video)
+        else
+          args+=(--with-video)
+        fi
+        if [ -n "$R2D_TIMEOUT" ]; then
+          args+=(--timeout "$R2D_TIMEOUT")
+        fi
+        status=0
+        readme2demo "${args[@]}" || status=$?
+        # Locate the run dir even on failure so partial artifacts still upload.
+        run_dir="$(find "$out_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+        echo "run-dir=$run_dir" >>"$GITHUB_OUTPUT"
+        if [ "$status" -ne 0 ]; then
+          echo "::error title=readme2demo pipeline failed::readme2demo run exited $status before reaching a verification verdict (preflight, budget exceeded, Docker, or a pipeline error). The action infrastructure broke — this is NOT a statement about the README. See this step's log."
+          exit "$status"
+        fi
+
+    - name: Fail the check when the run is unverified
+      # `readme2demo run` exits 0 for a completed-but-UNVERIFIED run BY DESIGN
+      # (cli._drive: verify failure is non-fatal, artifacts ship labeled
+      # UNVERIFIED). The red X must come from this explicit report --json
+      # check. Switch to exit-code wiring when #85 lands.
+      id: check
+      shell: bash
+      env:
+        R2D_RUN_DIR: ${{ steps.pipeline.outputs.run-dir }}
+      run: |
+        report_json="$(readme2demo report "$R2D_RUN_DIR" --json)"
+        verified="$(jq -r '.verified' <<<"$report_json")"
+        cost="$(jq -r '.cost' <<<"$report_json")"
+        echo "verified=$verified" >>"$GITHUB_OUTPUT"
+        echo "readme2demo: verified=$verified cost_usd=$cost run_dir=$R2D_RUN_DIR"
+        if [ "$verified" != "true" ]; then
+          echo "::error title=README verification failed::The pipeline completed, but the fresh-container replay of the README did NOT pass — the README is broken (the check working as intended, not an action failure). See verify.log in the uploaded readme2demo-run artifact."
+          exit 1
+        fi
+
+    - name: Upload run artifacts
+      # always(): the unverified case is exactly when verify.log matters most.
+      if: ${{ always() && steps.pipeline.outputs.run-dir != '' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: readme2demo-run
+        if-no-files-found: ignore
+        path: |
+          ${{ steps.pipeline.outputs.run-dir }}/tutorial.md
+          ${{ steps.pipeline.outputs.run-dir }}/step_by_step.md
+          ${{ steps.pipeline.outputs.run-dir }}/verify.log
+          ${{ steps.pipeline.outputs.run-dir }}/demo.gif
