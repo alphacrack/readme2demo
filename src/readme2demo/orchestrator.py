@@ -374,3 +374,51 @@ def summarize(manifest: Manifest) -> str:
             meta = " " + json.dumps(rec.meta, default=str)
         lines.append(f"  {name:<10} {rec.status:<10}{meta}{extra}")
     return "\n".join(lines)
+
+
+def _md_cell(text: str) -> str:
+    """Escape arbitrary text for a single GFM table cell.
+
+    Stage errors carry raw shell output: ``|`` would split the cell and a
+    newline would end the row, so pipes are backslash-escaped and newlines
+    collapsed to spaces.
+    """
+    return " ".join(text.splitlines()).replace("|", "\\|")
+
+
+def summarize_markdown(manifest: Manifest, artifacts: list[str]) -> str:
+    """GitHub-flavored Markdown run summary for ``readme2demo report --markdown``.
+
+    Pure: renders only the manifest plus ``artifacts``, a pre-computed list of
+    artifact filenames present in the run dir (the CLI does the ``exists()``
+    checks). Emitted for piping into ``$GITHUB_STEP_SUMMARY``.
+
+    The Verified badge derives from ``manifest.verified`` and nothing else —
+    that flag is set only by the fresh-container replay in the verify stage,
+    and this summary must not soften, infer, or upgrade it.
+    """
+    repo_part = (
+        f"`{manifest.repo_url}` @ `{(manifest.commit_sha or '?')[:7]}`"
+        if manifest.repo_url
+        else "(guide-only run — no repository)"
+    )
+    badge = "**Verified: yes**" if manifest.verified else "**Verified: NO**"
+    lines = [
+        f"## readme2demo — {manifest.run_id}",
+        "",
+        f"{badge} — {repo_part} — engine `{manifest.engine}` — "
+        f"total cost ${manifest.total_cost_usd:.4f}",
+        "",
+        "| Stage | Status | Cost (USD) | Notes |",
+        "|---|---|---|---|",
+    ]
+    for name, rec in manifest.stages.items():
+        # Failed stages carry `error`; skipped stages carry meta["reason"].
+        note = rec.error or rec.meta.get("reason", "")
+        lines.append(
+            f"| {name} | {rec.status} | {rec.cost_usd:.4f} | {_md_cell(note)} |"
+        )
+    if artifacts:
+        lines += ["", "**Artifacts**", ""]
+        lines += [f"- {name}" for name in artifacts]
+    return "\n".join(lines)
