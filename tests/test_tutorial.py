@@ -7,12 +7,14 @@ tests only exercise output validation against temp files.
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Type
 
 import pytest
 
 from readme2demo import render, tutorial
+from readme2demo.manifest import Manifest
 from readme2demo.types import (
     AgentResult,
     CommandEntry,
@@ -640,3 +642,57 @@ def test_fallback_titles_heredoc_and_subcommand():
     ) == "Create `/tmp/tfdrift-demo/main.tf`"
     assert _fallback_step_title("terraform init") == "Run `terraform init`"
     assert _fallback_step_title("export PATH=/x:$PATH") == "Set up the environment"
+
+
+# -- badge.json (shields.io endpoint badge) ------------------------------------
+
+
+def test_render_badge_verified_dates_from_verify_finished_at():
+    m = Manifest(run_id="t", verified=True, commit_sha="879865dabcdef")
+    m.stages["verify"].finished_at = "2026-07-14T12:00:00+00:00"
+    assert tutorial.render_badge(m) == {
+        "schemaVersion": 1,
+        "label": "readme2demo",
+        "message": "verified 2026-07-14",
+        "color": "green",
+        "commit": "879865d",
+    }
+
+
+def test_render_badge_unverified_is_loud_red():
+    # finished_at set and commit present — neither may flip the verdict:
+    # manifest.verified ALONE decides message/color.
+    m = Manifest(run_id="t", verified=False, commit_sha="879865dabcdef")
+    m.stages["verify"].finished_at = "2026-07-14T12:00:00+00:00"
+    doc = tutorial.render_badge(m)
+    assert doc["message"] == "unverified"
+    assert doc["color"] == "red"
+
+
+def test_render_badge_missing_finished_at_falls_back_to_utc_today():
+    m = Manifest(run_id="t", verified=True)
+    assert m.stages["verify"].finished_at is None
+    today = datetime.now(timezone.utc).date().isoformat()
+    assert tutorial.render_badge(m)["message"] == f"verified {today}"
+
+
+def test_render_badge_no_commit_sha_omits_commit_key():
+    # Guide-only runs have commit_sha=None — no "commit" key, not "None"[:7].
+    assert "commit" not in tutorial.render_badge(Manifest(run_id="t", verified=True))
+    assert "commit" not in tutorial.render_badge(Manifest(run_id="t", verified=False))
+
+
+def test_write_badge_json_roundtrip(tmp_path: Path):
+    import json as _json
+
+    m = Manifest(run_id="t", verified=True, commit_sha="879865dabcdef")
+    m.stages["verify"].finished_at = "2026-07-14T12:00:00+00:00"
+    path = tutorial.write_badge_json(tmp_path, m)
+    assert path == tmp_path / "badge.json"
+    assert _json.loads(path.read_text()) == {
+        "schemaVersion": 1,
+        "label": "readme2demo",
+        "message": "verified 2026-07-14",
+        "color": "green",
+        "commit": "879865d",
+    }
