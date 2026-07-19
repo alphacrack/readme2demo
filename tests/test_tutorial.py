@@ -151,7 +151,7 @@ def test_enforce_commands_restores_expected_output() -> None:
 def test_run_tutorial_restores_malicious_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "verify.log").write_text(VERIFY_LOG)
+    (tmp_path / "verify.log").write_text(VERIFY_LOG, encoding="utf-8")
     malicious = make_outline()
     malicious.steps[1].command = "rm -rf / --no-preserve-root"
     monkeypatch.setattr(tutorial.llm, "complete_json", identity_llm(malicious, cost=0.02))
@@ -167,7 +167,7 @@ def test_run_tutorial_restores_malicious_command(
         commit_sha="abcdef1234567890",
     )
 
-    text = (tmp_path / "tutorial.md").read_text()
+    text = (tmp_path / "tutorial.md").read_text(encoding="utf-8")
     assert DEMO_CMD in text
     assert "rm -rf" not in text
     assert cost == 0.02
@@ -176,7 +176,7 @@ def test_run_tutorial_restores_malicious_command(
 def test_run_tutorial_quotes_verify_log_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "verify.log").write_text(VERIFY_LOG)
+    (tmp_path / "verify.log").write_text(VERIFY_LOG, encoding="utf-8")
     monkeypatch.setattr(tutorial.llm, "complete_json", identity_llm(make_outline()))
 
     tutorial.run_tutorial(
@@ -190,7 +190,7 @@ def test_run_tutorial_quotes_verify_log_output(
         commit_sha="abcdef1",
     )
 
-    text = (tmp_path / "tutorial.md").read_text()
+    text = (tmp_path / "tutorial.md").read_text(encoding="utf-8")
     assert "Hello, world!" in text
 
 
@@ -218,7 +218,7 @@ def test_verified_badge(
         commit_sha="abcdef1234567890",
     )
 
-    text = (tmp_path / "tutorial.md").read_text()
+    text = (tmp_path / "tutorial.md").read_text(encoding="utf-8")
     assert must_contain in text
     assert must_not_contain not in text
 
@@ -241,7 +241,7 @@ def test_troubleshooting_with_fixes(tmp_path: Path) -> None:
 
     path = tutorial.write_troubleshooting(tmp_path, log)
 
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "pin numpy<2" in text
     assert "fails to build on numpy 2" in text
     assert "Failed building wheel" in text
@@ -250,7 +250,7 @@ def test_troubleshooting_with_fixes(tmp_path: Path) -> None:
 def test_troubleshooting_no_fixes(tmp_path: Path) -> None:
     path = tutorial.write_troubleshooting(tmp_path, make_log())
 
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "worked as written" in text
 
 
@@ -311,10 +311,12 @@ def _sbs_fixture(tmp_path):
         "\n"
         "# --- readme2demo success-criteria assertion ---\n"
         'r2d_output="$(python examples/hello.py 2>&1)"\n'
-        'echo "R2D_VERIFY_OK"\n'
+        'echo "R2D_VERIFY_OK"\n',
+        encoding="utf-8",
     )
     (tmp_path / "verify.log").write_text(
-        "+ python examples/hello.py\nHello from acme!\n"
+        "+ python examples/hello.py\nHello from acme!\n",
+        encoding="utf-8",
     )
     outline = TutorialOutline(
         title="Quickstart",
@@ -336,7 +338,7 @@ def test_write_step_by_step_grounded_in_commands_sh(tmp_path):
 
     plan, outline, log = _sbs_fixture(tmp_path)
     dest = write_step_by_step(tmp_path, plan, outline, log, verified=True)
-    text = dest.read_text()
+    text = dest.read_text(encoding="utf-8")
     # every non-preamble script command appears as a step, in order
     assert text.index("git clone --depth 1") < text.index("pip install") < text.index(
         "python examples/hello.py"
@@ -357,7 +359,9 @@ def test_write_step_by_step_unverified_badge(tmp_path):
     from readme2demo.tutorial import write_step_by_step
 
     plan, outline, log = _sbs_fixture(tmp_path)
-    text = write_step_by_step(tmp_path, plan, outline, log, verified=False).read_text()
+    text = write_step_by_step(
+        tmp_path, plan, outline, log, verified=False
+    ).read_text(encoding="utf-8")
     assert "UNVERIFIED" in text
 
 
@@ -423,7 +427,7 @@ def test_tutorial_md_front_matter_and_provenance(tmp_path, monkeypatch):
         tmp_path, plan, log, outline, "m", verified=True, base_image="img",
         commit_sha="879865dabcdef", repo_url="https://github.com/stacklok/toolhive",
     )
-    text = (tmp_path / "tutorial.md").read_text()
+    text = (tmp_path / "tutorial.md").read_text(encoding="utf-8")
     assert text.startswith("---\n")  # YAML front matter for static-site pipelines
     assert 'title: "How to install and run stacklok/toolhive — verified tutorial"' in text
     assert "verified: true" in text
@@ -432,14 +436,14 @@ def test_tutorial_md_front_matter_and_provenance(tmp_path, monkeypatch):
     assert "https://github.com/stacklok/toolhive" in text.split("---")[-1]  # source link in footer
 
     # schema.org HowTo structured data emitted alongside
-    doc = _json.loads((tmp_path / "howto.jsonld").read_text())
+    doc = _json.loads((tmp_path / "howto.jsonld").read_text(encoding="utf-8"))
     assert doc["@type"] == "HowTo"
     assert doc["isBasedOn"] == "https://github.com/stacklok/toolhive"
     assert doc["creativeWorkStatus"] == "verified"
     assert doc["step"][0]["itemListElement"][0]["text"] == "./run.sh"
 
     # generated step_by_step.md carries front matter too
-    sbs = (tmp_path / "step_by_step.md").read_text()
+    sbs = (tmp_path / "step_by_step.md").read_text(encoding="utf-8")
     assert sbs.startswith("---\n")
     assert 'title: "How to install and run stacklok/toolhive — step-by-step commands"' in sbs
     assert "generator: readme2demo" in sbs
@@ -543,14 +547,15 @@ def test_step_by_step_keeps_heredoc_as_one_step(tmp_path):
         "EOF\n"
         "tfdrift scan\n\n"
         "# --- readme2demo success-criteria assertion ---\n"
-        'echo "R2D_VERIFY_OK"\n'
+        'echo "R2D_VERIFY_OK"\n',
+        encoding="utf-8",
     )
     plan = Plan(quickstart_summary="q",
                 success_criteria=SuccessCriteria(command="tfdrift scan"))
     log = CommandLog(engine="claude-code", result=AgentResult(outcome="success"))
     text = write_step_by_step(
         tmp_path, plan, TutorialOutline(title="T", intro="I."), log, verified=True
-    ).read_text()
+    ).read_text(encoding="utf-8")
     # heredoc is ONE step: body inside the same code block, not separate steps
     assert text.count("cat > /tmp/demo/main.tf") == 1
     body_pos = text.index('resource "x" "y" {}')
@@ -578,7 +583,8 @@ def test_success_command_becomes_final_payoff_step(tmp_path):
         "pip install --break-system-packages tfdrift\n"
         "tfdrift --version\n\n"
         "# --- readme2demo success-criteria assertion ---\n"
-        'echo "R2D_VERIFY_OK"\n'
+        'echo "R2D_VERIFY_OK"\n',
+        encoding="utf-8",
     )
     plan = Plan(
         quickstart_summary="q",
@@ -601,7 +607,7 @@ def test_success_command_becomes_final_payoff_step(tmp_path):
     )
     text = write_step_by_step(
         tmp_path, plan, TutorialOutline(title="T", intro="I."), log, verified=True
-    ).read_text()
+    ).read_text(encoding="utf-8")
     # the scan is a numbered step now, with title, description, and REAL output
     assert "The payoff — see it work" in text
     assert "tfdrift scan --path /tmp/demo" in text
