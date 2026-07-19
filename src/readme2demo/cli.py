@@ -25,7 +25,12 @@ from rich.markup import escape
 
 from readme2demo.config import Config
 from readme2demo.manifest import STAGES, Manifest
-from readme2demo.orchestrator import Orchestrator, PipelineError, summarize
+from readme2demo.orchestrator import (
+    Orchestrator,
+    PipelineError,
+    summarize,
+    summarize_markdown,
+)
 from readme2demo import __version__ as version
 
 
@@ -450,13 +455,64 @@ def resume(
     _drive(orch)
 
 
+# Artifact filenames the pipeline writes to the run-dir root, in pipeline
+# order. `report --markdown` lists whichever of these exist — existence checks
+# only, so the summary keeps working on partial and failed runs.
+REPORT_ARTIFACTS = (
+    "commands.sh",
+    "demo.tape",
+    "step_by_step.md",
+    "tutorial.md",
+    "troubleshooting.md",
+    "howto.jsonld",
+    "demo.mp4",
+    "demo.gif",
+)
+
+
+def _report_exit_code(manifest: Manifest) -> int:
+    """Exit code for ``report``, mirroring ``_drive``'s outcome handling.
+
+    2 — a stage failed (the run itself broke);
+    1 — no stage failed, but the fresh-container replay did not pass
+        (completed UNVERIFIED);
+    0 — verified.
+
+    A failed stage outranks ``verified`` so a stale verdict from an earlier
+    pass can never mask a later failure.
+    """
+    if any(rec.status == "failed" for rec in manifest.stages.values()):
+        return 2
+    return 0 if manifest.verified else 1
+
+
 @app.command()
 def report(
     run_dir: Path = typer.Argument(..., help="Path to a runs/<run-id> directory"),
     json_output: bool = typer.Option(False, "--json", help="Emit summary as JSON"),
+    markdown_output: bool = typer.Option(
+        False,
+        "--markdown",
+        help="Emit summary as GitHub-flavored Markdown "
+        "(pipe into $GITHUB_STEP_SUMMARY)",
+    ),
 ) -> None:
-    """Print a summary of a run: stage statuses, verification, cost."""
+    """Print a summary of a run: stage statuses, verification, cost.
+
+    Exit codes signal the run's state so CI can gate on this command:
+    0 = verified, 1 = completed but UNVERIFIED, 2 = a stage failed.
+    """
+    if json_output and markdown_output:
+        raise typer.BadParameter("--json and --markdown are mutually exclusive")
     manifest = Manifest.load(run_dir)
+    if markdown_output:
+        # The renderer is pure; the CLI owns the filesystem side. Existence
+        # checks only — never parse other run files, so partial runs report.
+        artifacts = [n for n in REPORT_ARTIFACTS if (run_dir / n).exists()]
+        # plain print(), like --json: console.print wraps at terminal width
+        # and would mangle tables piped into $GITHUB_STEP_SUMMARY.
+        print(summarize_markdown(manifest, artifacts))
+        raise typer.Exit(_report_exit_code(manifest))
     if json_output:
         output_data = {
             "stages": [
@@ -468,9 +524,10 @@ def report(
             "commit": manifest.commit_sha,
         }
         print(json.dumps(output_data, indent=2))
-        raise typer.Exit(0)
+        raise typer.Exit(_report_exit_code(manifest))
     # escape(): stage errors may contain [bracketed] text Rich would swallow.
     console.print(escape(summarize(manifest)))
+    raise typer.Exit(_report_exit_code(manifest))
 
 
 def _preflight(cfg: Config) -> None:
