@@ -14,11 +14,13 @@ yourself with nothing but a Python install; no Docker daemon or API key needed.
 The headline: **0.7.0 is the GitHub Action release.** readme2demo can now sit
 in CI and turn "the README quietly broke" into a red X.
 
-## Step 1 — Upgrade
+## Step 1 — Install from the checkout
+
+readme2demo isn't on PyPI yet (#19) — install from the repo:
 
 ```bash
-pip install -U readme2demo    # or from a checkout: pip install -e ".[dev]"
-readme2demo --version         # 0.7.0
+pip install -e ".[dev]"
+readme2demo --version
 ```
 
 ## Step 2 — `report` exit codes now mean something (new in 0.7.0)
