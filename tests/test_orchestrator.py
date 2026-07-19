@@ -187,3 +187,38 @@ def test_dry_run_stops_after_ingest(tmp_path: Path, monkeypatch):
         assert manifest.stages[s].status == "skipped"
         assert manifest.stages[s].meta.get("reason") == "dry-run stop"
     assert manifest.verified is False
+
+
+def test_badge_written_even_when_tutorial_llm_fails(tmp_path: Path, monkeypatch):
+    # badge.json is written before run_tutorial: a TutorialError from the LLM
+    # polish pass must not be able to suppress the badge (issue #139) — an
+    # unverified run always gets a loud red badge, never a missing file.
+    import json
+
+    from readme2demo import tutorial as tutorial_mod
+    from readme2demo.tutorial import TutorialError
+    from readme2demo.types import AgentResult, CommandLog, TutorialOutline, TutorialStep
+
+    cfg = Config(runs_dir=tmp_path)
+    orch = Orchestrator.new_run("https://github.com/x/y", cfg)
+    (orch.run_dir / "plan.json").write_text(make_plan().model_dump_json())
+    (orch.run_dir / "command_log.json").write_text(
+        CommandLog(engine="claude-code", result=AgentResult(outcome="success"))
+        .model_dump_json()
+    )
+    (orch.run_dir / "tutorial_outline.json").write_text(
+        TutorialOutline(
+            title="T", intro="i",
+            steps=[TutorialStep(title="s", command="c", explanation="e")],
+        ).model_dump_json()
+    )
+
+    def boom(*args, **kwargs):
+        raise TutorialError("polish call failed")
+
+    monkeypatch.setattr(tutorial_mod, "run_tutorial", boom)
+    with pytest.raises(TutorialError):
+        orch._stage_tutorial()
+    doc = json.loads((orch.run_dir / "badge.json").read_text())
+    assert doc["message"] == "unverified"
+    assert doc["color"] == "red"

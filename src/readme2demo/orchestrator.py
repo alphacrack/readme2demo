@@ -289,6 +289,10 @@ class Orchestrator:
         )
 
     def _stage_tutorial(self) -> None:
+        # Badge first: its verdict comes from manifest.verified alone (set
+        # only by the verify stage), so it needs nothing from the LLM polish
+        # pass — a TutorialError mid-stage must not be able to suppress it.
+        tutorial_mod.write_badge_json(self.run_dir, self.manifest)
         plan = self._plan()
         cost = tutorial_mod.run_tutorial(
             self.run_dir,
