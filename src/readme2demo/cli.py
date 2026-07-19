@@ -450,12 +450,32 @@ def resume(
     _drive(orch)
 
 
+def _report_exit_code(manifest: Manifest) -> int:
+    """Exit code for ``report``, mirroring ``_drive``'s outcome handling.
+
+    2 — a stage failed (the run itself broke);
+    1 — no stage failed, but the fresh-container replay did not pass
+        (completed UNVERIFIED);
+    0 — verified.
+
+    A failed stage outranks ``verified`` so a stale verdict from an earlier
+    pass can never mask a later failure.
+    """
+    if any(rec.status == "failed" for rec in manifest.stages.values()):
+        return 2
+    return 0 if manifest.verified else 1
+
+
 @app.command()
 def report(
     run_dir: Path = typer.Argument(..., help="Path to a runs/<run-id> directory"),
     json_output: bool = typer.Option(False, "--json", help="Emit summary as JSON"),
 ) -> None:
-    """Print a summary of a run: stage statuses, verification, cost."""
+    """Print a summary of a run: stage statuses, verification, cost.
+
+    Exit codes signal the run's state so CI can gate on this command:
+    0 = verified, 1 = completed but UNVERIFIED, 2 = a stage failed.
+    """
     manifest = Manifest.load(run_dir)
     if json_output:
         output_data = {
@@ -468,9 +488,10 @@ def report(
             "commit": manifest.commit_sha,
         }
         print(json.dumps(output_data, indent=2))
-        raise typer.Exit(0)
+        raise typer.Exit(_report_exit_code(manifest))
     # escape(): stage errors may contain [bracketed] text Rich would swallow.
     console.print(escape(summarize(manifest)))
+    raise typer.Exit(_report_exit_code(manifest))
 
 
 def _preflight(cfg: Config) -> None:
