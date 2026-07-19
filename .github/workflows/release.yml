@@ -63,15 +63,15 @@ jobs:
   #      workflow: release.yml   environment: pypi
   # 3. Uncomment this job. No API token/secret needed (OIDC).
   #
-  # pypi:
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   environment: pypi
-  #   permissions:
-  #     id-token: write
-  #   steps:
-  #     - uses: actions/download-artifact@v8
-  #       with:
-  #         name: dist
-  #         path: dist/
-  #     - uses: pypa/gh-action-pypi-publish@release/v1
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
