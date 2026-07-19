@@ -414,7 +414,7 @@ def test_regression_report_keeps_bracketed_error_text(tmp_path):
     }
     (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
     result = runner.invoke(app, ["report", str(tmp_path)])
-    assert result.exit_code == 0
+    assert result.exit_code == 2  # ingest failed → report signals it (#85)
     assert "readme2demo[openai]" in result.output
 
 def test_regression_report_json_with_recorded_stages(tmp_path):
@@ -441,11 +441,103 @@ def test_regression_report_json_with_recorded_stages(tmp_path):
 
     result = runner.invoke(app, ["report", str(tmp_path), "--json"])
 
-    assert result.exit_code == 0
+    # agent failed → exit 2 even though verified is (stale-)True (#85).
+    assert result.exit_code == 2
     parsed = json.loads(result.output)
     assert parsed["verified"] is True
     assert parsed["cost"] == 1.5
     assert parsed["commit"] == "abcdef123456"
     assert {"name": "ingest", "status": "completed"} in parsed["stages"]
     assert {"name": "agent", "status": "failed"} in parsed["stages"]
-    
+
+
+# -- report exit codes (#85) --------------------------------------------------
+# Regression: `report` exited 0 unconditionally — the JSON branch via
+# `raise typer.Exit(0)`, the human branch by falling off the end — so a CI
+# pipeline could not gate on it and had to parse output instead. Contract:
+# 0 = verified, 1 = completed UNVERIFIED (no stage failed), 2 = a stage failed.
+
+
+def _write_manifest(tmp_path, **overrides):
+    """Write a minimal manifest.json into ``tmp_path`` and return the dir."""
+    import json
+
+    data = {"run_id": "exitcode-test-run", **overrides}
+    (tmp_path / "manifest.json").write_text(json.dumps(data))
+    return tmp_path
+
+
+@pytest.mark.parametrize("json_flag", [[], ["--json"]], ids=["human", "json"])
+def test_report_exits_0_when_verified(tmp_path, json_flag):
+    """Regression (#85): verified runs exit 0 on both output branches."""
+    _write_manifest(
+        tmp_path,
+        verified=True,
+        stages={"ingest": {"status": "completed"}, "verify": {"status": "completed"}},
+    )
+    result = runner.invoke(app, ["report", str(tmp_path)] + json_flag)
+    assert result.exit_code == 0
+
+
+@pytest.mark.parametrize("json_flag", [[], ["--json"]], ids=["human", "json"])
+def test_report_exits_1_when_completed_unverified(tmp_path, json_flag):
+    """Regression (#85): no failed stage but verified=False → exit 1, so
+    scripts can distinguish "completed UNVERIFIED" from "run failed"."""
+    _write_manifest(
+        tmp_path,
+        verified=False,
+        stages={"ingest": {"status": "completed"}, "verify": {"status": "completed"}},
+    )
+    result = runner.invoke(app, ["report", str(tmp_path)] + json_flag)
+    assert result.exit_code == 1
+
+
+@pytest.mark.parametrize("json_flag", [[], ["--json"]], ids=["human", "json"])
+def test_report_exits_2_when_any_stage_failed(tmp_path, json_flag):
+    """Regression (#85): any failed stage → exit 2 on both output branches."""
+    _write_manifest(
+        tmp_path,
+        verified=False,
+        stages={"ingest": {"status": "completed"}, "agent": {"status": "failed"}},
+    )
+    result = runner.invoke(app, ["report", str(tmp_path)] + json_flag)
+    assert result.exit_code == 2
+
+
+def test_report_failed_stage_outranks_stale_verified(tmp_path):
+    """Regression (#85): verified=True with a failed stage still exits 2 — a
+    stale verdict from an earlier pass must not mask a later failure."""
+    _write_manifest(
+        tmp_path,
+        verified=True,
+        stages={"verify": {"status": "completed"}, "render": {"status": "failed"}},
+    )
+    result = runner.invoke(app, ["report", str(tmp_path)])
+    assert result.exit_code == 2
+
+
+def test_report_fresh_run_counts_as_unverified(tmp_path):
+    """Regression (#85): a run with only pending stages (nothing failed,
+    nothing verified) exits 1, not 0."""
+    _write_manifest(tmp_path, verified=False, stages={})
+    result = runner.invoke(app, ["report", str(tmp_path)])
+    assert result.exit_code == 1
+
+
+def test_report_json_still_prints_full_payload_on_nonzero_exit(tmp_path):
+    """Regression (#85): the nonzero exit must not swallow the JSON payload —
+    CI consumers read both."""
+    _write_manifest(
+        tmp_path,
+        verified=False,
+        total_cost_usd=0.5,
+        stages={"agent": {"status": "failed"}},
+    )
+    import json
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--json"])
+    assert result.exit_code == 2
+    parsed = json.loads(result.output)
+    assert parsed["verified"] is False
+    assert parsed["cost"] == 0.5
+

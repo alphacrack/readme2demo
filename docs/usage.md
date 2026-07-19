@@ -48,6 +48,19 @@ readme2demo resume runs/tool-20260702-... --from-stage render
 readme2demo report runs/tool-20260702-...
 ```
 
+`report` exits with a code that signals the run's state, so CI can gate on it
+directly instead of parsing output:
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Verified — the fresh-container replay passed. |
+| `1` | Completed but **UNVERIFIED** — no stage failed, but the replay did not pass. |
+| `2` | A stage failed. |
+
+```bash
+readme2demo report runs/tool-20260702-... --json && echo "verified" || echo "gate failed"
+```
+
 ## Outputs
 
 Artifacts land in `runs/<run-id>/`: `tutorial.md`, `step_by_step.md`,
