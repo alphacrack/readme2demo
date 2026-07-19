@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -18,6 +18,8 @@ else:  # pragma: no cover
 
 
 class Config(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     # Agent engine
     engine: str = "claude-code"  # or "openhands" (used by --gemini/--openai/--anthropic)
     model: str = "claude-sonnet-5"  # model for planner/distiller/tutorial LLM calls
