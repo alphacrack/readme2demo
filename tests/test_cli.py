@@ -541,3 +541,91 @@ def test_report_json_still_prints_full_payload_on_nonzero_exit(tmp_path):
     assert parsed["verified"] is False
     assert parsed["cost"] == 0.5
 
+
+
+# -- report --markdown (#140) -------------------------------------------------
+
+
+def test_report_markdown_emits_gfm_summary_with_present_artifacts(tmp_path):
+    import json
+
+    manifest_data = {
+        "run_id": "glow-20260710-162012-33fc72",
+        "repo_url": "https://github.com/charmbracelet/glow",
+        "commit_sha": "a531d7c9deadbeef",
+        "verified": True,
+        "total_cost_usd": 0.1234,
+        "stages": {
+            "ingest": {"status": "completed", "cost_usd": 0.0021},
+            "verify": {"status": "completed"},
+        },
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
+    # Only these two artifacts exist — the list must reflect reality.
+    (tmp_path / "tutorial.md").write_text("t")
+    (tmp_path / "demo.mp4").write_bytes(b"\x00")
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--markdown"])
+
+    assert result.exit_code == 0  # verified → 0 (#85 contract applies here too)
+    out = result.output
+    assert "## readme2demo — glow-20260710-162012-33fc72" in out
+    assert "**Verified: yes**" in out
+    assert "| Stage | Status | Cost (USD) | Notes |" in out
+    assert "| ingest | completed | 0.0021 |  |" in out
+    assert "- tutorial.md" in out
+    assert "- demo.mp4" in out
+    assert "- demo.gif" not in out  # not on disk → not claimed
+
+
+def test_report_markdown_table_survives_hostile_error_text(tmp_path):
+    import json
+
+    manifest_data = {
+        "run_id": "hostile-run",
+        "verified": False,
+        "stages": {
+            "agent": {
+                "status": "failed",
+                "error": "cmd | head\npip install 'readme2demo[openai]'",
+            }
+        },
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--markdown"])
+
+    assert result.exit_code == 2  # failed stage (#85 contract)
+    rows = [ln for ln in result.output.splitlines() if ln.startswith("| agent |")]
+    assert len(rows) == 1  # newline collapsed — one row
+    assert "\\|" in rows[0]  # pipe escaped — cell intact
+    # Plain print(), no Rich: [openai] must survive verbatim.
+    assert "readme2demo[openai]" in rows[0]
+
+
+def test_report_markdown_unverified_exit_1(tmp_path):
+    import json
+
+    manifest_data = {
+        "run_id": "unverified-run",
+        "verified": False,
+        "stages": {"verify": {"status": "completed"}},
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
+    result = runner.invoke(app, ["report", str(tmp_path), "--markdown"])
+    assert result.exit_code == 1
+    assert "**Verified: NO**" in result.output
+
+
+def test_report_json_and_markdown_are_mutually_exclusive(tmp_path):
+    import json
+
+    (tmp_path / "manifest.json").write_text(json.dumps({"run_id": "x"}))
+    result = runner.invoke(
+        app, ["report", str(tmp_path), "--json", "--markdown"]
+    )
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output
+    # A usage error, not silent precedence: neither format was emitted.
+    assert "Verified" not in result.output
+    assert '"stages"' not in result.output
