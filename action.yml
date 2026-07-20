@@ -15,9 +15,8 @@
 # a `repo-path` input wired to the job workspace will be added when it lands.
 name: readme2demo
 description: >-
-  Run a repository's README inside a hardened Docker sandbox, replay the
-  distilled steps in a fresh container, and fail the check when the
-  clean-room replay does not pass.
+  Run a repo's README in a hardened Docker sandbox, replay it in a fresh
+  container, and fail CI when it breaks.
 author: alphacrack
 
 branding:
