@@ -5,6 +5,50 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-07-19
+
+readme2demo is on PyPI: `pip install readme2demo`.
+
+### Added
+- The release workflow publishes to PyPI on every tag via Trusted
+  Publishing (OIDC) — no tokens or stored secrets anywhere (#176,
+  closes #175).
+
+### Fixed
+- README renders correctly on the PyPI project page: all 14 relative
+  links/images converted to absolute URLs, and the dead
+  `IMPLEMENTATION_PLAN.md` link (file removed in v0.6.0) repointed to
+  `architecture/README.md` (#176).
+
+## [0.7.0] — 2026-07-19
+
+The GitHub Action release: readme2demo can now sit in CI and turn "the
+README quietly broke" into a red X. Runnable walkthrough of everything
+below: docs/whats-new-0.7.0.md.
+
+### Added
+- **GitHub Action** (#157): a repo-root composite action — install, build the
+  sandbox image, run the pipeline, fail the check when the fresh-container
+  replay doesn't pass. Artifacts and a job summary included; url mode until
+  local-path ingestion (#74) unlocks PR-head verification. Self-test via
+  workflow_dispatch.
+- `report` exit codes signal the verdict (#158): 0 verified, 1 completed but
+  unverified, 2 stage failed — CI can gate on the exit code alone.
+- `report --markdown` (#159): a GitHub-flavored job summary (verified badge
+  line, stage table with per-stage cost, artifact list) for
+  $GITHUB_STEP_SUMMARY.
+- Every run mints `badge.json` (#156): a shields.io endpoint file, written
+  before the tutorial LLM pass so nothing can suppress an unverified run's
+  red badge. Hosting tracked in #63.
+
+### Fixed
+- The suite is portable on Windows: the POSIX executable-bit test skips on
+  NTFS (assertions untouched on POSIX) and artifact reads pin UTF-8 instead
+  of trusting the locale (#154, thanks @innovationty).
+- A docker-socket test reached the real `docker run` probe and stalled the
+  suite 60s per run whenever Docker Desktop was half-up; the probe is now
+  monkeypatched and the suite stays under a second (#155).
+
 ## [0.6.4] — 2026-07-18
 
 Internal quality release: no user-facing behavior changes.

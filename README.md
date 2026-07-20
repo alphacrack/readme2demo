@@ -1,15 +1,15 @@
 # readme2demo — verified tutorials & demo videos from your README
 
 [![tests](https://github.com/alphacrack/readme2demo/actions/workflows/ci.yml/badge.svg)](https://github.com/alphacrack/readme2demo/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/alphacrack/readme2demo/blob/main/LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://github.com/alphacrack/readme2demo/blob/main/pyproject.toml)
 
 <!-- HERO:START — scripts/self-demo.sh rewrites this block with a fresh self-run.
      Run it locally (needs Docker + VHS + a model credential):
        ./scripts/self-demo.sh
      It runs readme2demo on this very repo, following docs/step-by-step.md,
      and drops the verified demo.gif in right here. -->
-[![readme2demo running on its own repo — verified demo](docs/demo.gif)](examples/readme2demo/)
+[![readme2demo running on its own repo — verified demo](https://raw.githubusercontent.com/alphacrack/readme2demo/main/docs/demo.gif)](https://github.com/alphacrack/readme2demo/tree/main/examples/readme2demo)
 
 <sub>▶ readme2demo generating its own tutorial: an AI agent runs this repo's README in a sandbox, a fresh container replays every step, then the demo is rendered. Full self-run output in <a href="examples/readme2demo/">examples/readme2demo</a> · run against another project in <a href="examples/toolhive/">examples/toolhive</a>.</sub>
 <!-- HERO:END -->
@@ -18,7 +18,7 @@
 
 The value is not "AI writes a tutorial" — it's that the tutorial **ran, twice**, before you saw it.
 
-**See it in action:** browse [verified example runs](examples/) — real tutorials, step-by-step guides, and demo videos, each independently replayed in a clean container before publishing.
+**See it in action:** browse [verified example runs](https://github.com/alphacrack/readme2demo/tree/main/examples) — real tutorials, step-by-step guides, and demo videos, each independently replayed in a clean container before publishing.
 
 ## How it works
 
@@ -28,14 +28,14 @@ repo URL → ingest/plan → agent run (in Docker) → normalize transcript
         → generate tutorial.md + troubleshooting.md → render VHS video
 ```
 
-See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full architecture.
+See [architecture/README.md](https://github.com/alphacrack/readme2demo/blob/main/architecture/README.md) for the full architecture.
 
 ## Requirements
 
 - Python ≥ 3.10, Docker
 - Auth, one of:
   - **Your Claude subscription (no API key):** a local Claude Code install. The planner/distiller/tutorial passes run on your subscription via `--llm-backend claude-cli` (`claude -p`), and the in-sandbox agent authenticates with `CLAUDE_CODE_OAUTH_TOKEN` (create one: `claude setup-token`). Fully supported for **self-hosted, single-operator** runs against your own repos — Pro/Max plans include a monthly Agent SDK credit that covers `claude -p`.
-  - `ANTHROPIC_API_KEY` — metered API billing; best for scale and concurrency, and **required if you host readme2demo as a service for others** (per Anthropic's terms, subscription auth may not power a multi-tenant product — see [ROADMAP.md](ROADMAP.md)). Add `--anthropic [model]` to run the sandboxed agent on the OpenHands engine with a Claude model instead of claude-code.
+  - `ANTHROPIC_API_KEY` — metered API billing; best for scale and concurrency, and **required if you host readme2demo as a service for others** (per Anthropic's terms, subscription auth may not power a multi-tenant product — see [ROADMAP.md](https://github.com/alphacrack/readme2demo/blob/main/ROADMAP.md)). Add `--anthropic [model]` to run the sandboxed agent on the OpenHands engine with a Claude model instead of claude-code.
   - **Google Gemini (`--gemini [model]`):** a single `GEMINI_API_KEY` runs the whole session off Claude — the planner/distiller/tutorial passes use Gemini and the sandboxed agent runs on the OpenHands engine (also on Gemini). No model name is built in (Google retires old ones with a hard 404): name it per run (`--gemini gemini-3.5-flash`) or export `GEMINI_MODEL` once. Install the extra: `pip install 'readme2demo[gemini]'`.
   - **OpenAI (`--openai [model]`):** same shape as Gemini — a single `OPENAI_API_KEY` powers the passes and the OpenHands agent, no model name is built in (`--openai gpt-5.1` or export `OPENAI_MODEL`). Install the extra: `pip install 'readme2demo[openai]'`.
 - Optional: `LLM_API_KEY` + `LLM_MODEL` for `--engine openhands` (experimental) with any other litellm provider — the presets above fill them automatically
@@ -166,15 +166,15 @@ python -m pytest -m integration      # requires docker + API keys (none yet)
 
 READMEs are untrusted code. The agent runs *inside* a hardened container (cap-drop ALL, no-new-privileges, memory/cpu/pids limits, non-root) — that container is the permission boundary. Known MVP tradeoff: the API key enters the sandbox; use a dedicated low-limit key. A host-side key-injecting egress proxy is planned (Milestone 4).
 
-Full threat model and private vulnerability reporting: [SECURITY.md](SECURITY.md).
+Full threat model and private vulnerability reporting: [SECURITY.md](https://github.com/alphacrack/readme2demo/blob/main/SECURITY.md).
 
 ## Project & community
 
-- [Examples](examples/) — verified output committed as proof
-- [Roadmap](ROADMAP.md) — where this is headed (including the exploratory hosted/SaaS direction)
-- [Contributing](CONTRIBUTING.md) — the one non-negotiable rule, and how to get set up
-- [Security policy](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Architecture](architecture/README.md) — stage boundaries and diagrams
+- [Examples](https://github.com/alphacrack/readme2demo/tree/main/examples) — verified output committed as proof
+- [Roadmap](https://github.com/alphacrack/readme2demo/blob/main/ROADMAP.md) — where this is headed (including the exploratory hosted/SaaS direction)
+- [Contributing](https://github.com/alphacrack/readme2demo/blob/main/CONTRIBUTING.md) — the one non-negotiable rule, and how to get set up
+- [Security policy](https://github.com/alphacrack/readme2demo/blob/main/SECURITY.md) · [Code of Conduct](https://github.com/alphacrack/readme2demo/blob/main/CODE_OF_CONDUCT.md)
+- [Architecture](https://github.com/alphacrack/readme2demo/blob/main/architecture/README.md) — stage boundaries and diagrams
 
 MIT licensed. The CLI and verification pipeline are, and will stay, free and open source.
 
