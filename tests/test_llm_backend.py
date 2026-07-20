@@ -11,6 +11,27 @@ from readme2demo.engines.claude_code import ClaudeCodeEngine
 from readme2demo.llm import LLMError
 
 
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (
+            'Before {"description": "use } to close the block", "cmd": "echo hi"}',
+            {"description": "use } to close the block", "cmd": "echo hi"},
+        ),
+        (
+            'Before {"description": "say \\\"hello\\\"", "cmd": "echo hi"}',
+            {"description": 'say "hello"', "cmd": "echo hi"},
+        ),
+        (
+            'Before {"description": "done", "cmd": "echo hi"} after',
+            {"description": "done", "cmd": "echo hi"},
+        ),
+    ],
+)
+def test_extract_json_handles_braces_escapes_and_trailing_prose(response, expected):
+    assert json.loads(llm.extract_json(response)) == expected
+
+
 @pytest.fixture(autouse=True)
 def reset_backend():
     llm.set_backend("auto")
