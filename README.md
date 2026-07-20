@@ -182,9 +182,9 @@ MIT licensed. The CLI and verification pipeline are, and will stay, free and ope
 
 A huge thank you to everyone who has contributed to readme2demo!
 
-[![Contributors](https://img.shields.io/github/contributors/Rahul-pamula/readme2demo?style=flat-square)](https://github.com/Rahul-pamula/readme2demo/graphs/contributors)
+[![Contributors](https://img.shields.io/github/contributors/alphacrack/readme2demo?style=flat-square)](https://github.com/alphacrack/readme2demo/graphs/contributors)
 
-<a href="https://github.com/Rahul-pamula/readme2demo/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=Rahul-pamula/readme2demo" alt="Contributors" />
+<a href="https://github.com/alphacrack/readme2demo/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=alphacrack/readme2demo" alt="Contributors" />
 </a>
 
