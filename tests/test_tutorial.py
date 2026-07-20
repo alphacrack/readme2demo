@@ -384,6 +384,13 @@ def test_seo_title_and_description():
     assert len(seo_description("x" * 400)) <= 160
 
 
+def test_seo_description_collapses_newlines():
+    """Regression: issue #91 keeps generated YAML descriptions single-line."""
+    from readme2demo.tutorial import seo_description
+
+    assert "\n" not in seo_description("Line one\nline two. It does more things.")
+
+
 @pytest.mark.parametrize(
     ("repo_url", "expected"),
     [
