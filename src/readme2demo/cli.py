@@ -17,6 +17,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 import json
+from difflib import get_close_matches
 from typing import Any, Optional
 
 import typer
@@ -141,14 +142,28 @@ def _load_config(config_file: Optional[Path], **overrides: Any) -> Config:
         location = ".".join(str(part) for part in error["loc"])
         source = config_file or Path("readme2demo.toml")
         if error["type"] == "extra_forbidden":
+            valid_keys = sorted(Config.model_fields)
+            suggestion = get_close_matches(location, valid_keys, n=1, cutoff=0.6)
+            hint = (
+                f" Did you mean '{escape(suggestion[0])}'?"
+                if suggestion
+                else f" Valid keys: {escape(', '.join(valid_keys))}."
+            )
             console.print(
                 f"[red]Unknown config key '{escape(location)}' in "
-                f"{escape(str(source))}.[/]"
+                f"{escape(str(source))}.{hint}[/]"
             )
         else:
+            bad_input = error.get("input", None)
+            value_bit = (
+                f" (got {escape(repr(bad_input))})"
+                if bad_input is not None
+                else ""
+            )
+            key_bit = f" for '{escape(location)}'" if location else ""
             console.print(
-                f"[red]Invalid configuration in {escape(str(source))}: "
-                f"{escape(error['msg'])}.[/]"
+                f"[red]Invalid configuration in {escape(str(source))}{key_bit}: "
+                f"{escape(error['msg'])}{value_bit}.[/]"
             )
         raise typer.Exit(2) from None
 
@@ -615,6 +630,9 @@ def _drive(orch: Orchestrator) -> None:
     except PipelineError as e:
         console.print(f"[red]Pipeline stopped:[/] {escape(str(e))}")
         console.print(escape(summarize(orch.manifest)))
+        console.print(
+            f"[dim]Fix the cause, then: readme2demo resume {escape(str(orch.run_dir))}[/]"
+        )
         raise typer.Exit(1)
     except Exception as e:  # noqa: BLE001 — stage errors are already in the manifest
         console.print(f"[red]{type(e).__name__}:[/] {escape(str(e))}")
@@ -636,6 +654,10 @@ def _drive(orch: Orchestrator) -> None:
         console.print(
             f"\n[bold yellow]⚠ Completed UNVERIFIED.[/] "
             f"See {escape(str(orch.run_dir))}/verify.log"
+        )
+        console.print(
+            f"[dim]Retry after fixes: readme2demo resume "
+            f"{escape(str(orch.run_dir))} --from-stage distill[/]"
         )
 
 

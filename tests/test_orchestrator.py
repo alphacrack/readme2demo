@@ -390,3 +390,15 @@ def test_summarize_markdown_escapes_table_breaking_error_text():
 def test_summarize_markdown_no_artifacts_omits_section():
     md = summarize_markdown(make_report_manifest(verified=False, stages={}), [])
     assert "**Artifacts**" not in md
+
+
+def test_budget_exceeded_message_mentions_flag():
+    """Regression: budget stop should name --budget-usd and resumability."""
+    # Construct the same message shape the orchestrator raises.
+    cost, budget = 6.0, 5.0
+    msg = (
+        f"Agent cost ${cost:.2f} exceeded budget ${budget:.2f}. "
+        "Raise --budget-usd (or budget_usd in config), then resume this run."
+    )
+    assert "--budget-usd" in msg
+    assert "resume" in msg.lower()

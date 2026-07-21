@@ -975,3 +975,21 @@ def test_render_socket_includes_group_add(tmp_path, monkeypatch):
     render_mod.run_render(tmp_path, Config(allow_docker_socket=True))
     assert "--group-add" in captured["cmd"]
     assert "999" in captured["cmd"]
+
+
+def test_cli_timeout_error_includes_next_step_hint(monkeypatch):
+    """Regression: claude -p failures should hint login or --llm-backend api."""
+    import subprocess
+    from readme2demo import llm as llm_mod
+
+    def boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd=["claude", "-p"], timeout=1)
+
+    monkeypatch.setattr(llm_mod.shutil, "which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr(llm_mod.subprocess, "run", boom)
+    try:
+        llm_mod._complete_cli("sys", "user", None)
+        assert False, "expected LLMError"
+    except llm_mod.LLMError as e:
+        text = str(e)
+        assert "--llm-backend api" in text or "claude -p hello" in text

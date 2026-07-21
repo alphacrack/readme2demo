@@ -652,3 +652,39 @@ def test_report_json_and_markdown_are_mutually_exclusive(tmp_path):
     # A usage error, not silent precedence: neither format was emitted.
     assert "Verified" not in result.output
     assert '"stages"' not in result.output
+
+
+def test_invalid_config_type_names_key_and_value(tmp_path):
+    """Regression: type errors must name the offending key and value."""
+    config_file = tmp_path / "readme2demo.toml"
+    config_file.write_text('max_turns = "sixty"\n', encoding="utf-8")
+
+    result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
+
+    assert result.exit_code == 2
+    assert "max_turns" in result.output
+    assert "sixty" in result.output
+
+
+def test_unknown_config_key_suggests_nearest_match(tmp_path):
+    """Regression: unknown keys should suggest a nearest valid key name."""
+    config_file = tmp_path / "readme2demo.toml"
+    config_file.write_text("max_turn = 99\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
+
+    assert result.exit_code == 2
+    assert "Unknown config key 'max_turn'" in result.output
+    assert "max_turns" in result.output  # nearest match / valid key
+
+
+def test_unknown_config_key_suggestion_is_escaped_for_rich_markup(tmp_path):
+    """Regression: suggested key names with brackets must not break Rich markup."""
+    config_file = tmp_path / "readme2demo.toml"
+    bad_key = "[bold]not_real[/bold]"
+    config_file.write_text(f'"{bad_key}" = 1\n', encoding="utf-8")
+
+    result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
+
+    assert result.exit_code == 2
+    assert bad_key in result.output
