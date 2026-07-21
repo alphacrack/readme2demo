@@ -1,10 +1,4 @@
-"""Unit tests for Config.load — CLI flags > readme2demo.toml > defaults.
-
-Documents CURRENT behavior, including that unknown keys (from the TOML or
-from overrides) are silently ignored by pydantic's default ``extra="ignore"``.
-Issue #84 tracks making unknown keys an error — these tests pin today's
-behavior and must be updated there, not "fixed" here.
-"""
+"""Unit tests for Config.load — CLI flags > readme2demo.toml > defaults."""
 
 from __future__ import annotations
 
@@ -126,29 +120,32 @@ class TestPrecedence:
         assert Config.load(max_turns=3).max_turns == 3
 
 
-# --- unknown keys (current behavior; #84 tracks changing it) --------------------
+# --- unknown keys ---------------------------------------------------------------
 
 
 class TestUnknownKeys:
-    def test_unknown_toml_key_silently_ignored(self, tmp_path: Path) -> None:
-        # Current behavior (#84): pydantic's default extra="ignore" drops
-        # unknown TOML keys without an error or a warning.
-        toml = _write_toml(
-            tmp_path / "r2d.toml", 'does_not_exist = "x"\nmax_turns = 5\n'
-        )
-        cfg = Config.load(toml)
-        assert cfg.max_turns == 5
-        assert not hasattr(cfg, "does_not_exist")
+    def test_stale_vhs_image_is_accepted_with_deprecation_warning(
+        self, tmp_path: Path
+    ) -> None:
+        toml = _write_toml(tmp_path / "r2d.toml", 'vhs_image = "old/image:tag"\n')
+        with pytest.warns(DeprecationWarning, match="vhs_image.*deprecated"):
+            cfg = Config.load(toml)
+        assert cfg.base_image == "readme2demo/base:latest"
+        assert "vhs_image" not in cfg.model_dump()
 
-    def test_typoed_toml_key_leaves_real_default(self, tmp_path: Path) -> None:
-        # The sharp edge #84 exists for: a typo ("max_turn") is dropped
-        # silently and the real setting keeps its default.
+    def test_unknown_toml_key_raises(self, tmp_path: Path) -> None:
+        toml = _write_toml(tmp_path / "r2d.toml", 'does_not_exist = "x"\nmax_turns = 5\n')
+        with pytest.raises(ValidationError, match="does_not_exist"):
+            Config.load(toml)
+
+    def test_typoed_toml_key_raises_and_names_bad_key(self, tmp_path: Path) -> None:
         toml = _write_toml(tmp_path / "r2d.toml", "max_turn = 99\n")
-        assert Config.load(toml).max_turns == 60
+        with pytest.raises(ValidationError, match="max_turn"):
+            Config.load(toml)
 
-    def test_unknown_override_kwarg_silently_ignored(
+    def test_unknown_override_kwarg_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        cfg = Config.load(totally_unknown="x")
-        assert not hasattr(cfg, "totally_unknown")
+        with pytest.raises(ValidationError, match="totally_unknown"):
+            Config.load(totally_unknown="x")
