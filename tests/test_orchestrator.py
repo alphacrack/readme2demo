@@ -392,13 +392,35 @@ def test_summarize_markdown_no_artifacts_omits_section():
     assert "**Artifacts**" not in md
 
 
-def test_budget_exceeded_message_mentions_flag():
+def test_budget_exceeded_message_mentions_flag(tmp_path: Path, monkeypatch):
     """Regression: budget stop should name --budget-usd and resumability."""
-    # Construct the same message shape the orchestrator raises.
-    cost, budget = 6.0, 5.0
-    msg = (
-        f"Agent cost ${cost:.2f} exceeded budget ${budget:.2f}. "
-        "Raise --budget-usd (or budget_usd in config), then resume this run."
-    )
-    assert "--budget-usd" in msg
-    assert "resume" in msg.lower()
+    from readme2demo import normalize as normalize_mod
+    from readme2demo.types import AgentResult, CommandLog
+
+    cfg = Config(runs_dir=tmp_path, budget_usd=5.0)
+    orch = Orchestrator.new_run("https://github.com/x/y", cfg)
+
+    def fake_ingest(repo_url, run_dir, model, **kwargs):
+        plan = make_plan()
+        (run_dir / "plan.json").write_text(plan.model_dump_json())
+        return plan, "abc1234", 0.005
+
+    def fake_run_agent(run_dir, plan, engine, c):
+        (run_dir / "transcript.ndjson").write_text("")
+        return run_dir / "transcript.ndjson"
+
+    def fake_normalize(path, engine, run_dir):
+        log = CommandLog(
+            engine="claude-code",
+            result=AgentResult(outcome="success", cost_usd=6.0),
+        )
+        (run_dir / "command_log.json").write_text(log.model_dump_json())
+        return log
+
+    monkeypatch.setattr(ingest_mod, "ingest", fake_ingest)
+    monkeypatch.setattr("readme2demo.orchestrator.run_agent", fake_run_agent)
+    monkeypatch.setattr(normalize_mod, "normalize", fake_normalize)
+
+    with pytest.raises(PipelineError, match="--budget-usd") as excinfo:
+        orch.run()
+    assert "resume" in str(excinfo.value).lower()
