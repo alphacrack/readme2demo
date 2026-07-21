@@ -988,7 +988,7 @@ def test_cli_timeout_error_includes_next_step_hint(monkeypatch):
     monkeypatch.setattr(llm_mod.shutil, "which", lambda _: "/usr/bin/claude")
     monkeypatch.setattr(llm_mod.subprocess, "run", boom)
     try:
-        llm_mod._complete_cli("sys", "user", None)
+        llm_mod._complete_cli("sys", "user", "")
         assert False, "expected LLMError"
     except llm_mod.LLMError as e:
         text = str(e)

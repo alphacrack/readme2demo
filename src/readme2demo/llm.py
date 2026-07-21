@@ -88,6 +88,10 @@ _BACKENDS = ("auto", "api", "claude-cli", "gemini", "openai")
 _backend: Backend = "auto"
 
 _CLI_TIMEOUT_S = 600
+_CLI_NEXT_STEP_HINT = (
+    " Check login with `claude -p hello`, or switch to "
+    "`--llm-backend api` with ANTHROPIC_API_KEY set."
+)
 
 
 @dataclass(frozen=True)
@@ -313,18 +317,18 @@ def _complete_cli(system: str, user: str, model: str) -> LLMResponse:
             timeout=_CLI_TIMEOUT_S, errors="replace", env=_sanitized_env(),
         )
     except subprocess.TimeoutExpired:
-        raise LLMError(f"claude -p timed out after {_CLI_TIMEOUT_S}s. Check login with `claude -p hello`, or switch to `--llm-backend api` with ANTHROPIC_API_KEY set.") from None
+        raise LLMError(f"claude -p timed out after {_CLI_TIMEOUT_S}s." + _CLI_NEXT_STEP_HINT) from None
     if proc.returncode != 0:
         raise LLMError(
             f"claude -p failed ({proc.returncode}): {(proc.stderr or proc.stdout)[:500]}."
-            f" Check login with `claude -p hello`, or switch to `--llm-backend api` with ANTHROPIC_API_KEY set."
+            + _CLI_NEXT_STEP_HINT
         )
     try:
         envelope = json.loads(proc.stdout)
     except json.JSONDecodeError as e:
-        raise LLMError(f"claude -p returned non-JSON output: {proc.stdout[:300]!r}. Check login with `claude -p hello`, or switch to `--llm-backend api` with ANTHROPIC_API_KEY set.") from e
+        raise LLMError(f"claude -p returned non-JSON output: {proc.stdout[:300]!r}." + _CLI_NEXT_STEP_HINT) from e
     if envelope.get("is_error"):
-        raise LLMError(f"claude -p reported an error: {envelope.get('result', '')[:500]}. Check login with `claude -p hello`, or switch to `--llm-backend api` with ANTHROPIC_API_KEY set.")
+        raise LLMError(f"claude -p reported an error: {envelope.get('result', '')[:500]}." + _CLI_NEXT_STEP_HINT)
     return LLMResponse(
         text=envelope.get("result", ""),
         cost_usd=float(envelope.get("total_cost_usd") or 0.0),
