@@ -210,7 +210,8 @@ class Orchestrator:
             )
         if self.cfg.budget_usd and cost > self.cfg.budget_usd:
             raise PipelineError(
-                f"Agent cost ${cost:.2f} exceeded budget ${self.cfg.budget_usd:.2f}"
+                f"Agent cost ${cost:.2f} exceeded budget ${self.cfg.budget_usd:.2f}. "
+                "Raise --budget-usd (or budget_usd in config), then resume this run."
             )
 
     def _stage_distill(self, feedback: str = "") -> None:
