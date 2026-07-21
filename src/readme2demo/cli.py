@@ -17,9 +17,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 import json
-from typing import Optional
+from typing import Any, Optional
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.markup import escape
 
@@ -118,8 +119,8 @@ def _build_config(
     base_image: Optional[str],
     llm_backend: Optional[str] = None,
 ) -> Config:
-    return Config.load(
-        toml_path=config_file,
+    return _load_config(
+        config_file,
         engine=engine,
         model=model,
         runs_dir=output_dir,
@@ -130,6 +131,26 @@ def _build_config(
         base_image=base_image,
         llm_backend=llm_backend,
     )
+
+
+def _load_config(config_file: Optional[Path], **overrides: Any) -> Config:
+    try:
+        return Config.load(toml_path=config_file, **overrides)
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        location = ".".join(str(part) for part in error["loc"])
+        source = config_file or Path("readme2demo.toml")
+        if error["type"] == "extra_forbidden":
+            console.print(
+                f"[red]Unknown config key '{escape(location)}' in "
+                f"{escape(str(source))}.[/]"
+            )
+        else:
+            console.print(
+                f"[red]Invalid configuration in {escape(str(source))}: "
+                f"{escape(error['msg'])}.[/]"
+            )
+        raise typer.Exit(2) from None
 
 
 def _resolve_repo(
@@ -430,7 +451,7 @@ def resume(
         )
         raise typer.Exit(2)
     preset = _select_preset(gemini, openai, anthropic)
-    cfg = Config.load(toml_path=config_file, llm_backend=llm_backend)
+    cfg = _load_config(config_file, llm_backend=llm_backend)
     if preset is not None:
         provider, preset_model = preset
         # Precedence: --<provider> <model> > config model (CLI beats toml) >

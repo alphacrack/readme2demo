@@ -302,6 +302,29 @@ def test_run_rejects_missing_config_file_before_preflight(tmp_path):
     assert "does not exist" in result.output
 
 
+def test_run_reports_unknown_config_key_without_traceback(tmp_path):
+    config_file = tmp_path / "readme2demo.toml"
+    config_file.write_text("max_turn = 99\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
+
+    assert result.exit_code == 2
+    assert "Unknown config key 'max_turn'" in result.output
+    assert config_file.name in result.output
+    assert "Traceback" not in result.output
+
+
+def test_unknown_config_key_is_escaped_for_rich_markup(tmp_path):
+    config_file = tmp_path / "readme2demo.toml"
+    bad_key = "[bold]not_real[/bold]"
+    config_file.write_text(f'"{bad_key}" = 1\n', encoding="utf-8")
+
+    result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
+
+    assert result.exit_code == 2
+    assert bad_key in result.output
+
+
 def test_version_flag():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0

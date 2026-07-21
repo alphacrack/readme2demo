@@ -5,6 +5,26 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] — 2026-07-21
+
+### Fixed
+- `extract_json` no longer truncates JSON whose string values contain `}` —
+  the brace counter is replaced with `raw_decode`, so plan commands like
+  `awk '{...}'` parse correctly (#146, closes #49, thanks @Sanjays2402).
+- Unknown TOML configuration keys fail fast with a concise CLI error
+  instead of being silently ignored; the retired `vhs_image` key is
+  accepted as a deprecated, warned, ignored compatibility field (#174,
+  closes #84, thanks @cen-zp).
+- SEO descriptions collapse embedded whitespace, keeping generated YAML
+  front matter single-line (#125, closes #91, thanks @pollychen-lab).
+- The README contributors section pointed at a fork — badge, graph link,
+  and avatar mosaic now show this repository's contributors, on GitHub
+  and PyPI (#180, closes #179, thanks @BenjaminAyivoh1).
+
+### Changed
+- CI: bump `actions/upload-artifact` to 7 in release.yml, aligning with
+  the pin the composite action already ships (#177).
+
 ## [0.7.1] — 2026-07-19
 
 readme2demo is on PyPI: `pip install readme2demo`.
