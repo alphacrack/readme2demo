@@ -38,6 +38,7 @@ class TestDefaults:
         assert cfg.verify_retries == 1
         assert cfg.distill_retries == 1
         assert cfg.skip_video is False
+        assert cfg.formats == ["demo", "gif"]
         assert cfg.step_by_step is None
         assert cfg.runs_dir == Path("runs")
 
@@ -149,3 +150,33 @@ class TestUnknownKeys:
         monkeypatch.chdir(tmp_path)
         with pytest.raises(ValidationError, match="totally_unknown"):
             Config.load(totally_unknown="x")
+
+
+# --- formats registry (surface-only #192) -------------------------------------
+
+
+class TestFormats:
+    def test_formats_default(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        assert Config.load().formats == ["demo", "gif"]
+
+    def test_formats_toml_accepted(self, tmp_path: Path) -> None:
+        toml = _write_toml(tmp_path / "r2d.toml", 'formats = ["demo"]\n')
+        assert Config.load(toml).formats == ["demo"]
+
+    def test_formats_toml_unknown_rejected(self, tmp_path: Path) -> None:
+        """Regression: bad toml formats must fail Config.load, not silent ignore."""
+        toml = _write_toml(tmp_path / "r2d.toml", 'formats = ["banana"]\n')
+        with pytest.raises(ValidationError, match="unknown format"):
+            Config.load(toml)
+
+    def test_formats_toml_unimplemented_rejected(self, tmp_path: Path) -> None:
+        """Regression: declared-but-unimplemented formats are not silently accepted."""
+        toml = _write_toml(tmp_path / "r2d.toml", 'formats = ["podcast"]\n')
+        with pytest.raises(ValidationError, match="not implemented yet"):
+            Config.load(toml)
+
+    def test_none_formats_flag_does_not_clobber_toml(self, tmp_path: Path) -> None:
+        """Regression: unpassed --formats (None) must keep toml formats."""
+        toml = _write_toml(tmp_path / "r2d.toml", 'formats = ["demo"]\n')
+        assert Config.load(toml, formats=None).formats == ["demo"]
