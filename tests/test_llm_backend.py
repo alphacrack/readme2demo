@@ -11,6 +11,27 @@ from readme2demo.engines.claude_code import ClaudeCodeEngine
 from readme2demo.llm import LLMError
 
 
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (
+            'Before {"description": "use } to close the block", "cmd": "echo hi"}',
+            {"description": "use } to close the block", "cmd": "echo hi"},
+        ),
+        (
+            'Before {"description": "say \\\"hello\\\"", "cmd": "echo hi"}',
+            {"description": 'say "hello"', "cmd": "echo hi"},
+        ),
+        (
+            'Before {"description": "done", "cmd": "echo hi"} after',
+            {"description": "done", "cmd": "echo hi"},
+        ),
+    ],
+)
+def test_extract_json_handles_braces_escapes_and_trailing_prose(response, expected):
+    assert json.loads(llm.extract_json(response)) == expected
+
+
 @pytest.fixture(autouse=True)
 def reset_backend():
     llm.set_backend("auto")
@@ -786,7 +807,7 @@ def test_regression_agent_stderr_copied_to_run_dir(tmp_path, monkeypatch):
             pass
 
         def copy_out(self, src, dst):
-            if src.endswith("agent.stderr"):
+            if src == agent_mod.STDERR_CONTAINER_PATH:
                 dst.write_text("the real server error, in full")
             else:
                 raise SandboxError("no transcript")  # agent produced none
@@ -841,6 +862,15 @@ def test_docker_socket_mounted_when_enabled(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(agent_mod, "Sandbox", FakeSandbox)
+    # Regression: run_agent's socket branch calls sandbox.docker_socket_gid,
+    # which shells out to a real `docker run` probe (timeout=60). With Docker
+    # Desktop half-up the probe blocks the full 60s and the suite stalled a
+    # minute per run; with the daemon cleanly down it failed fast, which is
+    # why this leak went unnoticed. agent.py imports the probe from the
+    # sandbox module at call time, so patch it there.
+    monkeypatch.setattr(
+        "readme2demo.sandbox.docker_socket_gid", lambda image: "999"
+    )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     (tmp_path / "repo").mkdir()
     plan = Plan(quickstart_summary="q", success_criteria=SuccessCriteria(command="x"))
@@ -857,6 +887,7 @@ def test_docker_socket_mounted_when_enabled(tmp_path, monkeypatch):
             src == "/var/run/docker.sock" for src, _, _ in captured["mounts"]
         )
         assert has_socket is expected
+        assert captured["group_add"] == ("999" if enabled else None)
 
 
 def test_render_cmd_includes_socket_when_enabled(tmp_path, monkeypatch):

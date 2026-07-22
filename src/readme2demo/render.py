@@ -169,9 +169,9 @@ def _generate_gif_preview(run_dir: Path, image: str, cfg: Config) -> None:
     """Best-effort short GIF preview from the rendered mp4 (for README embeds).
 
     A full-length GIF of a multi-minute tutorial is enormous and rendering it
-    frame-by-frame once exhausted the Docker VM disk; a {GIF_PREVIEW_SECONDS}s
-    downscaled preview does the README-embed job at ~1% of the size. Failure
-    here never fails the stage — the mp4 is the artifact of record.
+    frame-by-frame once exhausted the Docker VM disk; a short downscaled preview
+    (``GIF_PREVIEW_SECONDS`` seconds) does the README-embed job at ~1% of the
+    size. Failure here never fails the stage — the mp4 is the artifact of record.
     """
     cmd = [
         "docker", "run", "--rm",
