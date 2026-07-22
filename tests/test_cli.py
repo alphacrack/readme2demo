@@ -678,13 +678,64 @@ def test_unknown_config_key_suggests_nearest_match(tmp_path):
     assert "max_turns" in result.output  # nearest match / valid key
 
 
-def test_unknown_config_key_suggestion_is_escaped_for_rich_markup(tmp_path):
-    """Regression: suggested key names with brackets must not break Rich markup."""
+def test_config_type_error_value_with_brackets_is_escaped(tmp_path):
+    """Regression: bracketed config *values* must survive escape(repr(...)).
+
+    Failure class 15: escape(repr(x)) is the safe order. This pins the new
+    value_bit path, not the unknown-key path already covered above.
+    """
     config_file = tmp_path / "readme2demo.toml"
-    bad_key = "[bold]not_real[/bold]"
-    config_file.write_text(f'"{bad_key}" = 1\n', encoding="utf-8")
+    # max_turns expects int; a bracketed string hits the type-error branch.
+    config_file.write_text('max_turns = "[bold]sixty[/bold]"\n', encoding="utf-8")
 
     result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
 
     assert result.exit_code == 2
-    assert bad_key in result.output
+    assert "max_turns" in result.output
+    # Literal brackets from the value must appear (not be swallowed by Rich).
+    assert "[bold]sixty[/bold]" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_pipeline_error_prints_resume_hint(tmp_path, monkeypatch):
+    """Regression: PipelineError path must print an explicit resume command."""
+    from readme2demo.orchestrator import Orchestrator, PipelineError
+    from readme2demo.manifest import Manifest
+
+    run_dir = tmp_path / "r1"
+    Manifest.create(run_dir, _URL, "claude-code", "img").save()
+
+    def boom(self):
+        raise PipelineError("synthetic stop for resume-hint test")
+
+    monkeypatch.setattr(Orchestrator, "run", boom)
+    monkeypatch.setattr("readme2demo.cli._preflight", lambda cfg: None)
+
+    result = runner.invoke(app, ["resume", str(run_dir)])
+    assert result.exit_code == 1
+    assert "Pipeline stopped" in result.output
+    assert "readme2demo resume" in result.output
+    # Rich may soft-wrap long absolute paths; compare collapsed whitespace.
+    collapsed = " ".join(result.output.split())
+    assert str(run_dir) in collapsed or run_dir.name in result.output
+
+
+def test_unverified_completion_prints_from_stage_distill(tmp_path, monkeypatch):
+    """Regression: UNVERIFIED completion must suggest resume --from-stage distill."""
+    from readme2demo.orchestrator import Orchestrator
+    from readme2demo.manifest import Manifest
+
+    run_dir = tmp_path / "r2"
+    m = Manifest.create(run_dir, _URL, "claude-code", "img")
+    m.verified = False
+    m.save()
+
+    def fake_run(self):
+        return self.manifest
+
+    monkeypatch.setattr(Orchestrator, "run", fake_run)
+    monkeypatch.setattr("readme2demo.cli._preflight", lambda cfg: None)
+
+    result = runner.invoke(app, ["resume", str(run_dir)])
+    assert "--from-stage distill" in result.output
+    assert "UNVERIFIED" in result.output or "unverified" in result.output.lower()

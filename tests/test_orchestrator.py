@@ -393,7 +393,7 @@ def test_summarize_markdown_no_artifacts_omits_section():
 
 
 def test_budget_exceeded_message_mentions_flag(tmp_path: Path, monkeypatch):
-    """Regression: budget stop should name --budget-usd and resumability."""
+    """Regression: budget stop names config remedy that works with resume."""
     from readme2demo import normalize as normalize_mod
     from readme2demo.types import AgentResult, CommandLog
 
@@ -421,6 +421,10 @@ def test_budget_exceeded_message_mentions_flag(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("readme2demo.orchestrator.run_agent", fake_run_agent)
     monkeypatch.setattr(normalize_mod, "normalize", fake_normalize)
 
-    with pytest.raises(PipelineError, match="--budget-usd") as excinfo:
+    with pytest.raises(PipelineError, match="budget_usd") as excinfo:
         orch.run()
-    assert "resume" in str(excinfo.value).lower()
+    msg = str(excinfo.value)
+    assert "resume" in msg.lower()
+    assert "readme2demo.toml" in msg
+    # --budget-usd is only for a *fresh* run, not resume
+    assert "fresh run" in msg
