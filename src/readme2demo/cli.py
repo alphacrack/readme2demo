@@ -142,7 +142,10 @@ def _load_config(config_file: Optional[Path], **overrides: Any) -> Config:
         location = ".".join(str(part) for part in error["loc"])
         source = config_file or Path("readme2demo.toml")
         if error["type"] == "extra_forbidden":
-            valid_keys = sorted(Config.model_fields)
+            # Exclude deprecated no-op shims (e.g. vhs_image) from suggestions.
+            valid_keys = sorted(
+                k for k, f in Config.model_fields.items() if not f.exclude
+            )
             suggestion = get_close_matches(location, valid_keys, n=1, cutoff=0.6)
             hint = (
                 f" Did you mean '{escape(suggestion[0])}'?"
@@ -156,7 +159,7 @@ def _load_config(config_file: Optional[Path], **overrides: Any) -> Config:
         else:
             bad_input = error.get("input", None)
             value_bit = (
-                f" (got {escape(repr(bad_input))})"
+                f" (got {escape(repr(bad_input)[:120])})"
                 if bad_input is not None
                 else ""
             )
