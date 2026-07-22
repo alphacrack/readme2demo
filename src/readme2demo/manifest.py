@@ -108,12 +108,23 @@ class Manifest(BaseModel):
         )
         self.save()
 
-    def stage_fail(self, name: str, error: str, **meta) -> None:
+    def stage_fail(self, name: str, error: str, cost_usd: float = 0.0, **meta) -> None:
+        """Mark a stage failed, accounting any spend it incurred before failing.
+
+        Mirrors :meth:`stage_complete`'s cost handling: a stage that pays for
+        LLM calls and *then* raises still spent that money, and the run's
+        total must say so. Callers pass what they know; the default of 0.0
+        keeps failures with no recoverable cost unchanged.
+        """
         rec = self.stages[name]
         rec.status = "failed"
         rec.finished_at = utcnow()
         rec.error = error
+        rec.cost_usd += cost_usd
         rec.meta.update(meta)
+        self.total_cost_usd = round(
+            sum(r.cost_usd for r in self.stages.values()), 6
+        )
         self.save()
 
     def stage_skip(self, name: str, reason: str = "") -> None:

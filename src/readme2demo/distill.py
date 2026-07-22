@@ -66,7 +66,16 @@ def heredoc_prefix(cmd: str) -> Optional[str]:
 
 
 class DistillError(RuntimeError):
-    """Raised when the distiller cannot produce a fully grounded output."""
+    """Raised when the distiller cannot produce a fully grounded output.
+
+    Carries ``cost_usd`` so spend already incurred before the failure is not
+    lost: the grounding retry means this error can arrive *after* two paid
+    LLM calls, and the orchestrator records it against the failed stage.
+    """
+
+    def __init__(self, *args, cost_usd: float = 0.0) -> None:
+        super().__init__(*args)
+        self.cost_usd = cost_usd
 
 
 # -- grounding ----------------------------------------------------------------
@@ -332,7 +341,8 @@ def run_distiller(
         if violations:
             raise DistillError(
                 "Distiller produced ungrounded commands after retry: "
-                + "; ".join(repr(v) for v in violations)
+                + "; ".join(repr(v) for v in violations),
+                cost_usd=total_cost,
             )
     return out, total_cost
 
