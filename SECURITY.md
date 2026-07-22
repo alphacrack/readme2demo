@@ -21,7 +21,7 @@ this checkout. Rows marked **planned** or **known limitation** are intentional
 honesty, not marketing. Parent epic for planned egress/credential hardening:
 [#64](https://github.com/alphacrack/readme2demo/issues/64).
 
-| Claim | Status | Where (verify on your checkout — line numbers drift) |
+| Claim (agent + verify containers) | Status | Where (verify on your checkout — line numbers drift) |
 |---|---|---|
 | All Linux capabilities dropped | **enforced today** | `src/readme2demo/sandbox.py` `start()` — `"--cap-drop", "ALL"` |
 | No privilege escalation | **enforced today** | `sandbox.py` `start()` — `"--security-opt", "no-new-privileges"` |
@@ -30,11 +30,12 @@ honesty, not marketing. Parent epic for planned egress/credential hardening:
 | Target repo mounted read-only | **enforced today** | `agent.py` — mount `(…/repo, "/repo", "ro")`; agent copies to writable `/work` |
 | Verify replays in a fresh container without model credentials | **enforced today** | `verify.py` — `Sandbox(...)` built with **no** `env=` argument |
 | Docker socket only on explicit opt-in | **enforced today** | `agent.py` / `verify.py` — socket mounted only when `cfg.allow_docker_socket` |
-| Network egress domain allowlist | **planned (v0.8)** — today: plain Docker network | `sandbox.py` default `network: str = "bridge"`; `start()` passes `"--network", self.network`. No allowlist in tree. See #64 |
-| Host-side key-injecting proxy (credentials never enter the sandbox) | **planned (v0.8)** | #64 |
-| Disk quotas on the work volume | **planned (v0.8)** | #64 |
-| Red-team acceptance harness (hostile-README integration tests) | **planned (v0.8)** | #64 |
-| API key visible on the docker argv (`-e KEY=VALUE`) | **known limitation** | `sandbox.py` `start()` env loop (`-e f"{k}={v}"`); agent passes `env=env`. Tracked in #51 |
+| Network egress domain allowlist | **planned (v0.8)** — today: plain Docker network | `sandbox.py` default `network: str = "bridge"`; `start()` passes `"--network", self.network`. No allowlist in tree. See [#64](https://github.com/alphacrack/readme2demo/issues/64) |
+| Host-side key-injecting proxy (credentials never enter the sandbox) | **planned (v0.8)** | [#64](https://github.com/alphacrack/readme2demo/issues/64) |
+| Disk quotas on the work volume | **planned (v0.8)** | [#64](https://github.com/alphacrack/readme2demo/issues/64) |
+| Red-team acceptance harness (hostile-README integration tests) | **planned (v0.8)** | [#64](https://github.com/alphacrack/readme2demo/issues/64) |
+| API key visible on the docker argv (`-e KEY=VALUE`) | **known limitation** | `sandbox.py` `start()` env loop (`-e f"{k}={v}"`); agent passes `env=env`. Tracked in [#51](https://github.com/alphacrack/readme2demo/issues/51) |
+| Render-stage container hardening (cap-drop / no-new-privileges / pids) | **known limitation** | `render.py` builds its own `docker run` with `--memory`/`--cpus`/`--network` only (no `--cap-drop ALL`, no `no-new-privileges`, no `--pids-limit`). Untrusted-execution surface separate from `Sandbox.start()`. See architecture/README.md |
 
 ### Known tradeoffs (narrative)
 
@@ -42,19 +43,26 @@ These match the table; keep them named so adopters are not surprised.
 
 - **The API key enters the sandbox (MVP).** The agent stage constructs
   `Sandbox(..., env=env)` so the model credential is present inside the
-  container and also appears on the `docker run` argv. A fully compromised
-  agent can read it. **Mitigation: use a dedicated, low-limit key — never your
-  primary key.** Host-side key injection is planned in #64; argv exposure is
-  tracked in #51.
+  container and also appears on the `docker run` argv — whichever provider you
+  run on (`ANTHROPIC_API_KEY`/`CLAUDE_CODE_OAUTH_TOKEN`, or `OPENAI_API_KEY` /
+  `GEMINI_API_KEY` via the litellm-style `LLM_API_KEY` with the provider
+  presets). A fully compromised agent can read it. **Mitigation: use a
+  dedicated, low-limit key — never your primary key.** Host-side key injection
+  is planned in [#64](https://github.com/alphacrack/readme2demo/issues/64);
+  argv exposure is tracked in
+  [#51](https://github.com/alphacrack/readme2demo/issues/51). Related:
+  [#52](https://github.com/alphacrack/readme2demo/issues/52).
 - **`--allow-docker-socket` pierces isolation.** When set, the Docker socket is
-  mounted read-write into the sandbox (agent and verify). That is effectively
-  root on the host Docker daemon. **Only pass it for repos you trust.**
+  mounted read-write into the sandbox (agent and verify; render can also mount
+  it when enabled). That is effectively root on the host Docker daemon. **Only
+  pass it for repos you trust.**
 - **Network egress is open bridge networking today, not allowlisted.** Runs need
   to clone repos and pull packages, so the default is `--network bridge` with
   no domain filter. Data exfiltration by a determined, compromised agent is not
   fully prevented in this release. Domain allowlisting is planned for v0.8
-  (#64). (Earlier wording that said egress was already “allowlisted” was
-  incorrect and has been removed.)
+  ([#64](https://github.com/alphacrack/readme2demo/issues/64)).
+- **Render container is less hardened than agent/verify.** The render stage does
+  not go through `Sandbox.start()`; see the table row above.
 
 Do not run readme2demo against untrusted repos on a machine that holds
 secrets you can't afford to rotate. Prefer a throwaway VM or CI runner.
@@ -96,3 +104,15 @@ What to expect:
 
 We support coordinated disclosure: please give us a reasonable window to ship
 a fix before any public write-up.
+
+## Scope
+
+**In scope:** sandbox escapes, isolation-flag bypasses, credential leakage
+paths beyond the documented tradeoffs above, grounding bypasses that let an
+unverified command reach published output (`tutorial.md`, `step_by_step.md`,
+`commands.sh`, or the demo tape), and anything that turns a target repo into
+host code execution.
+
+**Out of scope:** the documented MVP tradeoffs listed above, vulnerabilities
+in target repos themselves (that's the point — we run them in a box), and
+issues that require the operator to have already disabled the sandbox flags.

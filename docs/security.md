@@ -5,7 +5,7 @@ design concern, not an afterthought.
 
 ## The sandbox is the boundary
 
-The agent runs *inside* a hardened Docker container:
+The **agent and verify** stages run *inside* hardened Docker containers (`Sandbox.start()`):
 
 - `--cap-drop ALL` and `--security-opt no-new-privileges`
 - non-root user (`USER demo` in the base image)
@@ -18,10 +18,15 @@ agent's run.
 
 For a **claims-vs-roadmap table** (enforced today vs planned v0.8 vs known
 limitations, each with code pointers), see the root
-[`SECURITY.md`](../SECURITY.md). That table is the source of truth; this page
+[`SECURITY.md`](https://github.com/alphacrack/readme2demo/blob/main/SECURITY.md). That table is the source of truth; this page
 is the short summary.
 
 ## Known tradeoffs
+
+- **Render container is not fully hardened like agent/verify.** `render.py` runs
+  its own `docker run` with memory/CPU/network limits only (no cap-drop /
+  no-new-privileges / pids-limit). See the root SECURITY.md table.
+
 
 - **API key in the sandbox** (MVP): the model credential currently enters the
   sandbox (and the `docker run` argv). Use a dedicated, low-limit key. A
@@ -34,7 +39,7 @@ is the short summary.
   socket pierces isolation. Only enable it for repositories you trust.
 - **Network egress is open bridge networking today, not allowlisted.** The
   sandbox defaults to Docker `--network bridge` so package installs and git
-  clones work. Domain allowlisting is planned for v0.8 (#64). Until then,
+  clones work. Domain allowlisting is planned for v0.8 ([#64](https://github.com/alphacrack/readme2demo/issues/64)). Until then,
   treat outbound network from a compromised agent as possible.
 
 ## Reporting a vulnerability
