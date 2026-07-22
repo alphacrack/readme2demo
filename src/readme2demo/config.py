@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import sys
+import warnings
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -18,6 +19,8 @@ else:  # pragma: no cover
 
 
 class Config(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     # Agent engine
     engine: str = "claude-code"  # or "openhands" (used by --gemini/--openai/--anthropic)
     model: str = "claude-sonnet-5"  # model for planner/distiller/tutorial LLM calls
@@ -37,6 +40,9 @@ class Config(BaseModel):
     memory: str = "4g"
     cpus: str = "2"
     pids_limit: int = 512
+    # Compatibility shim for configs written before v0.6.1. The value is no
+    # longer used, but accepting it avoids breaking existing TOML files.
+    vhs_image: Optional[str] = Field(default=None, exclude=True, repr=False)
 
     # Stages
     # --dry-run: stop after ingest/planning (feasibility verdict + blockers),
@@ -55,6 +61,17 @@ class Config(BaseModel):
     # Layout
     runs_dir: Path = Field(default_factory=lambda: Path("runs"))
 
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_deprecated_vhs_image(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "vhs_image" in data:
+            warnings.warn(
+                "'vhs_image' is deprecated and ignored; use 'base_image' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return data
+
     @classmethod
     def load(cls, toml_path: Optional[Path] = None, **overrides: Any) -> "Config":
         """Build config from optional TOML file plus explicit overrides.
@@ -64,6 +81,8 @@ class Config(BaseModel):
         """
         data: dict[str, Any] = {}
         path = toml_path or Path("readme2demo.toml")
+        if toml_path is not None and not path.exists():
+            raise FileNotFoundError(f"Config file not found: {path}")
         if path.exists() and tomllib is not None:
             with open(path, "rb") as f:
                 data.update(tomllib.load(f))

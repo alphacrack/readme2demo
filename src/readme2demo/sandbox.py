@@ -88,10 +88,10 @@ class Sandbox:
         try:
             if stream_to is not None:
                 with open(stream_to, "ab") as sink:
-                    proc = subprocess.run(
+                    streamed = subprocess.run(
                         cmd, stdout=sink, stderr=subprocess.STDOUT, timeout=timeout
                     )
-                return ExecResult(proc.returncode, f"(streamed to {stream_to})")
+                return ExecResult(streamed.returncode, f"(streamed to {stream_to})")
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout, errors="replace"
             )
@@ -165,13 +165,6 @@ class Sandbox:
         res = self._run(["docker", "cp", f"{self.name}:{src}", str(dst)], timeout=300)
         if not res.ok:
             raise SandboxError(f"docker cp out failed: {res.output.strip()}")
-
-    def commit(self, tag: str) -> str:
-        """Snapshot the container (used for the post-setup render checkpoint)."""
-        res = self._run(["docker", "commit", self.name, tag], timeout=300)
-        if not res.ok:
-            raise SandboxError(f"docker commit failed: {res.output.strip()}")
-        return tag
 
     def destroy(self) -> None:
         if self._started:

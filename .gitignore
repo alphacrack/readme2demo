@@ -30,3 +30,8 @@ Thumbs.db
 
 # Launch / go-to-market material — internal, never shipped
 launch/
+
+# coverage (pytest-cov)
+.coverage
+.coverage.*
+htmlcov/

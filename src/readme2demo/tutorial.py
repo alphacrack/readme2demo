@@ -21,6 +21,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
 from . import llm
+from .manifest import Manifest
 from .types import CommandLog, Plan, TutorialOutline
 
 #: Maximum characters of captured output quoted per step / error block.
@@ -147,21 +148,30 @@ def _verified_line(verified: bool, base_image: str, commit_sha: str | None) -> s
 
 
 def _repo_name(repo_url: str) -> str:
-    """`https://github.com/owner/repo` → `owner/repo` (best effort)."""
-    parts = repo_url.rstrip("/").removesuffix(".git").split("/")
+    """`https://github.com/owner/repo` → `owner/repo` (best effort).
+
+    Git also accepts scp-style URLs such as
+    ``git@github.com:owner/repo.git``. Normalize the host/path separator
+    before extracting the final owner/repository pair so those URLs produce
+    the same name as their HTTPS equivalents.
+    """
+    value = repo_url.rstrip("/").removesuffix(".git")
+    if "://" not in value and ":" in value:
+        value = value.rsplit(":", 1)[-1]
+    parts = value.split("/")
     return "/".join(parts[-2:]) if len(parts) >= 2 else repo_url
 
 
-def seo_title(repo_url: str, fallback: str) -> str:
+def seo_title(repo_url: str, fallback: str, suffix: str = "verified tutorial") -> str:
     """Query-shaped page title: matches how people actually search."""
     if not repo_url:
         return fallback
-    return f"How to install and run {_repo_name(repo_url)} — verified tutorial"
+    return f"How to install and run {_repo_name(repo_url)} — {suffix}"
 
 
 def seo_description(intro: str, max_len: int = 160) -> str:
     """First sentence of the intro, clamped to meta-description length."""
-    first = intro.split(". ")[0].strip().replace('"', "'")
+    first = " ".join(intro.split(". ")[0].split()).replace('"', "'")
     if not first.endswith("."):
         first += "."
     suffix = " Every command verified in a clean container."
@@ -261,6 +271,48 @@ def write_howto_jsonld(
     doc = {k: v for k, v in doc.items() if v is not None}
     path = run_dir / "howto.jsonld"
     path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    return path
+
+
+def render_badge(manifest: Manifest) -> dict:
+    """Render the shields.io endpoint-badge document for a run.
+
+    Pure: reads only ``manifest`` fields — no I/O, no LLM. The verdict
+    derives from ``manifest.verified`` ALONE (the flag only the verify
+    stage's clean replay sets), never from agent transcripts or prose: the
+    grounding invariant, in code. The date is taken from the verify stage's
+    ``finished_at`` (the timestamp of the replay verdict — deterministic, and
+    stable when a run is resumed days later), falling back to today's UTC
+    date only when that field is unset.
+    """
+    doc: dict = {"schemaVersion": 1, "label": "readme2demo"}
+    if manifest.verified:
+        verify = manifest.stages.get("verify")
+        stamp = verify.finished_at if verify else None
+        date = (
+            stamp.split("T")[0]
+            if stamp
+            else datetime.now(timezone.utc).date().isoformat()
+        )
+        doc["message"] = f"verified {date}"
+        doc["color"] = "green"
+    else:
+        doc["message"] = "unverified"
+        doc["color"] = "red"
+    if manifest.commit_sha:
+        # Provenance extra; shields.io ignores unknown keys.
+        doc["commit"] = manifest.commit_sha[:7]
+    return doc
+
+
+def write_badge_json(run_dir: Path, manifest: Manifest) -> Path:
+    """Write ``badge.json`` — the shields.io endpoint badge — into the run dir.
+
+    Always written: an unverified run gets a loud red badge, never a missing
+    file.
+    """
+    path = run_dir / "badge.json"
+    path.write_text(json.dumps(render_badge(manifest), indent=2), encoding="utf-8")
     return path
 
 
@@ -504,9 +556,12 @@ def write_step_by_step(
         else "> ⚠️ UNVERIFIED — the clean-container replay did not pass; treat "
         "these steps as a best-effort record of a working session."
     )
+    step_by_step_title = seo_title(
+        repo_url, outline.title + " — step by step", "step-by-step commands"
+    )
     lines = [
         "---",
-        f'title: "{seo_title(repo_url, outline.title + " — step by step")}"',
+        f'title: "{step_by_step_title}"',
         f'description: "{seo_description(outline.intro)}"',
         f"date: {today}",
         f"verified: {'true' if verified else 'false'}",

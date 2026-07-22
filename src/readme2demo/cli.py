@@ -17,15 +17,21 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 import json
-from typing import Optional
+from typing import Any, Optional
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.markup import escape
 
 from readme2demo.config import Config
 from readme2demo.manifest import STAGES, Manifest
-from readme2demo.orchestrator import Orchestrator, PipelineError, summarize
+from readme2demo.orchestrator import (
+    Orchestrator,
+    PipelineError,
+    summarize,
+    summarize_markdown,
+)
 from readme2demo import __version__ as version
 
 
@@ -113,8 +119,8 @@ def _build_config(
     base_image: Optional[str],
     llm_backend: Optional[str] = None,
 ) -> Config:
-    return Config.load(
-        toml_path=config_file,
+    return _load_config(
+        config_file,
         engine=engine,
         model=model,
         runs_dir=output_dir,
@@ -125,6 +131,26 @@ def _build_config(
         base_image=base_image,
         llm_backend=llm_backend,
     )
+
+
+def _load_config(config_file: Optional[Path], **overrides: Any) -> Config:
+    try:
+        return Config.load(toml_path=config_file, **overrides)
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        location = ".".join(str(part) for part in error["loc"])
+        source = config_file or Path("readme2demo.toml")
+        if error["type"] == "extra_forbidden":
+            console.print(
+                f"[red]Unknown config key '{escape(location)}' in "
+                f"{escape(str(source))}.[/]"
+            )
+        else:
+            console.print(
+                f"[red]Invalid configuration in {escape(str(source))}: "
+                f"{escape(error['msg'])}.[/]"
+            )
+        raise typer.Exit(2) from None
 
 
 def _resolve_repo(
@@ -334,7 +360,10 @@ def run(
              "`--anthropic` uses --model, else the ANTHROPIC_MODEL env var, "
              "else the config default.",
     ),
-    config_file: Optional[Path] = typer.Option(None, "--config", help="readme2demo.toml path"),
+    config_file: Optional[Path] = typer.Option(
+        None, "--config", help="readme2demo.toml path",
+        exists=True, dir_okay=False, resolve_path=True,
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run",
         help="Run ingest/plan only and print feasibility/blockers, then stop "
@@ -378,7 +407,10 @@ def run(
 
 @app.command()
 def resume(
-    run_dir: Path = typer.Argument(..., help="Path to an existing runs/<run-id> directory"),
+    run_dir: Path = typer.Argument(
+        ..., exists=True, file_okay=False,
+        help="Path to an existing runs/<run-id> directory",
+    ),
     from_stage: Optional[str] = typer.Option(
         None, "--from-stage", help=f"Re-run from this stage: {', '.join(STAGES)}"
     ),
@@ -405,7 +437,9 @@ def resume(
              "the config default. See `readme2demo run --help`.",
     ),
     allow_docker_socket: bool = typer.Option(False, "--allow-docker-socket"),
-    config_file: Optional[Path] = typer.Option(None, "--config"),
+    config_file: Optional[Path] = typer.Option(
+        None, "--config", exists=True, dir_okay=False, resolve_path=True
+    ),
 ) -> None:
     """Resume an interrupted run (optionally re-running from a given stage)."""
     if from_stage and from_stage not in STAGES:
@@ -417,7 +451,7 @@ def resume(
         )
         raise typer.Exit(2)
     preset = _select_preset(gemini, openai, anthropic)
-    cfg = Config.load(toml_path=config_file, llm_backend=llm_backend)
+    cfg = _load_config(config_file, llm_backend=llm_backend)
     if preset is not None:
         provider, preset_model = preset
         # Precedence: --<provider> <model> > config model (CLI beats toml) >
@@ -442,13 +476,64 @@ def resume(
     _drive(orch)
 
 
+# Artifact filenames the pipeline writes to the run-dir root, in pipeline
+# order. `report --markdown` lists whichever of these exist — existence checks
+# only, so the summary keeps working on partial and failed runs.
+REPORT_ARTIFACTS = (
+    "commands.sh",
+    "demo.tape",
+    "step_by_step.md",
+    "tutorial.md",
+    "troubleshooting.md",
+    "howto.jsonld",
+    "demo.mp4",
+    "demo.gif",
+)
+
+
+def _report_exit_code(manifest: Manifest) -> int:
+    """Exit code for ``report``, mirroring ``_drive``'s outcome handling.
+
+    2 — a stage failed (the run itself broke);
+    1 — no stage failed, but the fresh-container replay did not pass
+        (completed UNVERIFIED);
+    0 — verified.
+
+    A failed stage outranks ``verified`` so a stale verdict from an earlier
+    pass can never mask a later failure.
+    """
+    if any(rec.status == "failed" for rec in manifest.stages.values()):
+        return 2
+    return 0 if manifest.verified else 1
+
+
 @app.command()
 def report(
     run_dir: Path = typer.Argument(..., help="Path to a runs/<run-id> directory"),
     json_output: bool = typer.Option(False, "--json", help="Emit summary as JSON"),
+    markdown_output: bool = typer.Option(
+        False,
+        "--markdown",
+        help="Emit summary as GitHub-flavored Markdown "
+        "(pipe into $GITHUB_STEP_SUMMARY)",
+    ),
 ) -> None:
-    """Print a summary of a run: stage statuses, verification, cost."""
+    """Print a summary of a run: stage statuses, verification, cost.
+
+    Exit codes signal the run's state so CI can gate on this command:
+    0 = verified, 1 = completed but UNVERIFIED, 2 = a stage failed.
+    """
+    if json_output and markdown_output:
+        raise typer.BadParameter("--json and --markdown are mutually exclusive")
     manifest = Manifest.load(run_dir)
+    if markdown_output:
+        # The renderer is pure; the CLI owns the filesystem side. Existence
+        # checks only — never parse other run files, so partial runs report.
+        artifacts = [n for n in REPORT_ARTIFACTS if (run_dir / n).exists()]
+        # plain print(), like --json: console.print wraps at terminal width
+        # and would mangle tables piped into $GITHUB_STEP_SUMMARY.
+        print(summarize_markdown(manifest, artifacts))
+        raise typer.Exit(_report_exit_code(manifest))
     if json_output:
         output_data = {
             "stages": [
@@ -460,9 +545,10 @@ def report(
             "commit": manifest.commit_sha,
         }
         print(json.dumps(output_data, indent=2))
-        raise typer.Exit(0)
+        raise typer.Exit(_report_exit_code(manifest))
     # escape(): stage errors may contain [bracketed] text Rich would swallow.
     console.print(escape(summarize(manifest)))
+    raise typer.Exit(_report_exit_code(manifest))
 
 
 def _preflight(cfg: Config) -> None:

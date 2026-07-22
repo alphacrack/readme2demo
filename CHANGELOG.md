@@ -5,6 +5,152 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] — 2026-07-21
+
+### Fixed
+- `extract_json` no longer truncates JSON whose string values contain `}` —
+  the brace counter is replaced with `raw_decode`, so plan commands like
+  `awk '{...}'` parse correctly (#146, closes #49, thanks @Sanjays2402).
+- Unknown TOML configuration keys fail fast with a concise CLI error
+  instead of being silently ignored; the retired `vhs_image` key is
+  accepted as a deprecated, warned, ignored compatibility field (#174,
+  closes #84, thanks @cen-zp).
+- SEO descriptions collapse embedded whitespace, keeping generated YAML
+  front matter single-line (#125, closes #91, thanks @pollychen-lab).
+- The README contributors section pointed at a fork — badge, graph link,
+  and avatar mosaic now show this repository's contributors, on GitHub
+  and PyPI (#180, closes #179, thanks @BenjaminAyivoh1).
+
+### Changed
+- CI: bump `actions/upload-artifact` to 7 in release.yml, aligning with
+  the pin the composite action already ships (#177).
+
+## [0.7.1] — 2026-07-19
+
+readme2demo is on PyPI: `pip install readme2demo`.
+
+### Added
+- The release workflow publishes to PyPI on every tag via Trusted
+  Publishing (OIDC) — no tokens or stored secrets anywhere (#176,
+  closes #175).
+
+### Fixed
+- README renders correctly on the PyPI project page: all 14 relative
+  links/images converted to absolute URLs, and the dead
+  `IMPLEMENTATION_PLAN.md` link (file removed in v0.6.0) repointed to
+  `architecture/README.md` (#176).
+
+## [0.7.0] — 2026-07-19
+
+The GitHub Action release: readme2demo can now sit in CI and turn "the
+README quietly broke" into a red X. Runnable walkthrough of everything
+below: docs/whats-new-0.7.0.md.
+
+### Added
+- **GitHub Action** (#157): a repo-root composite action — install, build the
+  sandbox image, run the pipeline, fail the check when the fresh-container
+  replay doesn't pass. Artifacts and a job summary included; url mode until
+  local-path ingestion (#74) unlocks PR-head verification. Self-test via
+  workflow_dispatch.
+- `report` exit codes signal the verdict (#158): 0 verified, 1 completed but
+  unverified, 2 stage failed — CI can gate on the exit code alone.
+- `report --markdown` (#159): a GitHub-flavored job summary (verified badge
+  line, stage table with per-stage cost, artifact list) for
+  $GITHUB_STEP_SUMMARY.
+- Every run mints `badge.json` (#156): a shields.io endpoint file, written
+  before the tutorial LLM pass so nothing can suppress an unverified run's
+  red badge. Hosting tracked in #63.
+
+### Fixed
+- The suite is portable on Windows: the POSIX executable-bit test skips on
+  NTFS (assertions untouched on POSIX) and artifact reads pin UTF-8 instead
+  of trusting the locale (#154, thanks @innovationty).
+- A docker-socket test reached the real `docker run` probe and stalled the
+  suite 60s per run whenever Docker Desktop was half-up; the probe is now
+  monkeypatched and the suite stays under a second (#155).
+
+## [0.6.4] — 2026-07-18
+
+Internal quality release: no user-facing behavior changes.
+
+### Added
+- Trust-boundary test suite (#151): 70 tests covering the modules that are
+  the security/verification story. Every sandbox hardening flag now has a
+  named test — the "never weaken hardening flags" rule is executable — and
+  the clean-room replay is pinned as the only source of "verified"
+  (fresh sandbox per attempt, no agent state, marker + exit code both
+  required, no marker leakage across attempts).
+- CI: coverage ratchet at 80% (measured floor) on the 3.12 leg and a mypy
+  type-check job gating at zero errors (#152). The handful of src touches
+  required are annotation-only or provably behavior-identical; grounding
+  paths audited.
+
+## [0.6.3] — 2026-07-17
+
+### Fixed
+- `readme2demo resume` rejects a nonexistent or non-directory run dir at
+  argument parsing with a clear message instead of failing mid-stage with a
+  raw traceback (#133, thanks @ulises-jeremias).
+- `--config` pointing at a missing file is now a hard error instead of being
+  silently ignored and falling back to defaults — both the `run` and
+  `resume` paths are covered (#127, thanks @pollychen-lab).
+- The bug-report issue template lists the real `--llm-backend` values
+  (`auto`, `api`, `claude-cli`, `gemini`, `openai`) and engine names
+  (`claude-code`, `openhands`), so reports arrive with usable repro fields
+  (#131, thanks @ulises-jeremias).
+
+### Changed
+- Docstring accuracy: `collect_docs` documents the guide-first ordering it
+  actually implements (#130), the VHS GIF-preview docstring no longer
+  renders a literal `{GIF_PREVIEW_SECONDS}` (#128) (both thanks
+  @ulises-jeremias), and the agent prompt-builder docstring documents the
+  `{guide_note}` placeholder (#126, thanks @veronica-foltz).
+- The agent stderr container path is a module-level constant shared by both
+  derivation sites instead of being built twice inline (#129, thanks
+  @ulises-jeremias).
+
+## [0.6.2] — 2026-07-16
+
+### Fixed
+- scp-style repository URLs (`git@github.com:owner/repo.git`) normalize
+  correctly in SEO titles instead of leaking the `git@host:` prefix
+  (#121, thanks @hkJerryLeung).
+- `step_by_step.md` now carries a distinct SEO title from `tutorial.md`, so
+  the two published pages no longer compete for the same search snippet
+  (#134, thanks @cnYui).
+- Installer-URL phase tagging is word-anchored: URLs merely containing the
+  substring "install" (`installer.tar.gz`, `reinstall-notes.txt`) no longer
+  classify as setup steps (#122, thanks @hkJerryLeung).
+
+### Removed
+- Dead `Sandbox.commit()` method — zero call sites, no behavior change
+  (#82, thanks @professor314).
+
+### Changed
+- Docs: the documented pipeline stage order matches `manifest.STAGES`
+  (verify → tutorial → render) across README, CONTRIBUTING, ROADMAP, and the
+  bug-report template (#120, thanks @cnYui); README gained an auto-updating
+  contributors section (#136).
+- CI: bump `actions/setup-python` to 6 (#34) and `actions/download-artifact`
+  to 8 (#35) — the v4-upload/v8-download artifact pairing in release.yml is
+  cross-compatible (verified against the v8 compatibility matrix before
+  merge).
+
+## [0.6.1] — 2026-07-14
+
+Recorded retroactively: the `v0.6.1` tag was cut at commit `5ca0eda` without
+a version bump or changelog entry, so its GitHub Release shipped placeholder
+notes and the built wheel self-reports 0.6.0. Contents:
+
+### Fixed
+- VHS render timeout errors now name the image that actually ran instead of
+  the never-used stock VHS image, and the dead `vhs_image` config field is
+  gone — a stale `vhs_image` key in an existing `readme2demo.toml` is
+  silently tolerated (#81, thanks @sapunyangkut).
+
+### Changed
+- CI: bump `actions/configure-pages` to 6 (#33).
+
 ## [0.6.0] — 2026-07-12
 
 ### Added

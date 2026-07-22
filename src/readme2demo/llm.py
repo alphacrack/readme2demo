@@ -469,15 +469,8 @@ def extract_json(text: str) -> str:
     start = text.find("{")
     if start == -1:
         raise LLMError(f"No JSON object found in response: {text[:200]!r}")
-    depth = 0
-    for i, ch in enumerate(text[start:], start):
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1]
-    raise LLMError("Unbalanced JSON object in response")
+    _, end = json.JSONDecoder().raw_decode(text[start:])
+    return text[start : start + end]
 
 
 def complete_json(
