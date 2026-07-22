@@ -59,7 +59,7 @@ written before the tutorial LLM pass, so nothing can suppress it.
 cat examples/readme2demo/badge.json
 ```
 
-Hosting it as a live badge endpoint is tracked in #63.
+Hosting it as a live badge endpoint is documented in [Verification badge](usage.md#verification-badge) (slice of #63).
 
 ## Step 5 — the GitHub Action (the 0.7.0 flagship)
 
