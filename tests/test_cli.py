@@ -470,8 +470,8 @@ def test_regression_report_json_with_recorded_stages(tmp_path):
     assert parsed["verified"] is True
     assert parsed["cost"] == 1.5
     assert parsed["commit"] == "abcdef123456"
-    assert {"name": "ingest", "status": "completed"} in parsed["stages"]
-    assert {"name": "agent", "status": "failed"} in parsed["stages"]
+    assert {"name": "ingest", "status": "completed", "duration_seconds": None} in parsed["stages"]
+    assert {"name": "agent", "status": "failed", "duration_seconds": None} in parsed["stages"]
 
 
 # -- report exit codes (#85) --------------------------------------------------
@@ -579,7 +579,11 @@ def test_report_markdown_emits_gfm_summary_with_present_artifacts(tmp_path):
         "verified": True,
         "total_cost_usd": 0.1234,
         "stages": {
-            "ingest": {"status": "completed", "cost_usd": 0.0021},
+            "ingest": {
+                "status": "completed", "cost_usd": 0.0021,
+                "started_at": "2026-07-21T12:00:00+00:00",
+                "finished_at": "2026-07-21T12:00:02.5+00:00",
+            },
             "verify": {"status": "completed"},
         },
     }
@@ -594,8 +598,8 @@ def test_report_markdown_emits_gfm_summary_with_present_artifacts(tmp_path):
     out = result.output
     assert "## readme2demo — glow-20260710-162012-33fc72" in out
     assert "**Verified: yes**" in out
-    assert "| Stage | Status | Cost (USD) | Notes |" in out
-    assert "| ingest | completed | 0.0021 |  |" in out
+    assert "| Stage | Status | Duration | Cost (USD) | Notes |" in out
+    assert "| ingest | completed | 2s | 0.0021 |  |" in out
     assert "- tutorial.md" in out
     assert "- demo.mp4" in out
     assert "- demo.gif" not in out  # not on disk → not claimed

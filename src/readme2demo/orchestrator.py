@@ -23,7 +23,7 @@ from readme2demo import verify as verify_mod
 from readme2demo.agent import run_agent
 from readme2demo.config import Config
 from readme2demo.engines import get_engine
-from readme2demo.manifest import Manifest, new_run_id
+from readme2demo.manifest import Manifest, stage_duration, new_run_id
 from readme2demo.types import CommandLog, DistillOutput, Plan, TutorialOutline
 
 console = Console()
@@ -368,12 +368,23 @@ def summarize(manifest: Manifest) -> str:
         "stages:",
     ]
     for name, rec in manifest.stages.items():
+        duration = _format_stage_duration(stage_duration(rec))
         extra = f" — {rec.error}" if rec.error else ""
         meta = ""
         if rec.meta:
             meta = " " + json.dumps(rec.meta, default=str)
-        lines.append(f"  {name:<10} {rec.status:<10}{meta}{extra}")
+        lines.append(f"  {name:<10} {rec.status:<10} {duration:>8}{meta}{extra}")
     return "\n".join(lines)
+
+
+def _format_stage_duration(seconds: float | None) -> str:
+    """Render a stage duration for human and Markdown report output."""
+    if seconds is None:
+        return "—"
+    if seconds < 1:
+        return "<1s"
+    minutes, remainder = divmod(round(seconds), 60)
+    return f"{minutes}m {remainder}s" if minutes else f"{remainder}s"
 
 
 def _md_cell(text: str) -> str:
@@ -409,14 +420,15 @@ def summarize_markdown(manifest: Manifest, artifacts: list[str]) -> str:
         f"{badge} — {repo_part} — engine `{manifest.engine}` — "
         f"total cost ${manifest.total_cost_usd:.4f}",
         "",
-        "| Stage | Status | Cost (USD) | Notes |",
-        "|---|---|---|---|",
+        "| Stage | Status | Duration | Cost (USD) | Notes |",
+        "|---|---|---|---|---|",
     ]
     for name, rec in manifest.stages.items():
         # Failed stages carry `error`; skipped stages carry meta["reason"].
         note = rec.error or rec.meta.get("reason", "")
         lines.append(
-            f"| {name} | {rec.status} | {rec.cost_usd:.4f} | {_md_cell(note)} |"
+            f"| {name} | {rec.status} | {_format_stage_duration(stage_duration(rec))} | "
+            f"{rec.cost_usd:.4f} | {_md_cell(note)} |"
         )
     if artifacts:
         lines += ["", "**Artifacts**", ""]

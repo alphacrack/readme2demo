@@ -38,6 +38,25 @@ class StageRecord(BaseModel):
     meta: dict = Field(default_factory=dict)
 
 
+def stage_duration(record: StageRecord) -> Optional[float]:
+    """Return a stage's final-attempt duration in seconds, if it is knowable.
+
+    Missing, malformed, or clock-skewed timestamps are deliberately unknown
+    rather than zero: a skipped or still-running stage did not take zero time.
+    This remains a plain helper so duration never changes the manifest schema.
+    """
+    if not record.started_at or not record.finished_at:
+        return None
+    try:
+        seconds = (
+            datetime.fromisoformat(record.finished_at)
+            - datetime.fromisoformat(record.started_at)
+        ).total_seconds()
+    except ValueError:
+        return None
+    return seconds if seconds >= 0 else None
+
+
 class Manifest(BaseModel):
     run_id: str
     # Empty string == a guide-only run (no repository; the -s/--step-by-step
