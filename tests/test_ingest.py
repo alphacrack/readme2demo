@@ -8,6 +8,7 @@ from readme2demo import ingest as ingest_mod
 from readme2demo import llm
 from readme2demo.ingest import (
     IngestError,
+    classify_url,
     clone_repo,
     collect_docs,
     collect_inventory,
@@ -385,3 +386,61 @@ def test_ingest_no_repo_and_no_guide_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest_mod, "clone_repo", boom_clone)
     with pytest.raises(IngestError, match="Nothing to ingest"):
         ingest_mod.ingest(None, tmp_path / "run", "m", guide_file=None)
+
+# -- classify_url --------------------------------------------------------------
+
+
+
+@pytest.mark.parametrize(
+    "url,kind,repo_url",
+    [
+        ("https://github.com/owner/repo", "git", "https://github.com/owner/repo"),
+        ("https://github.com/owner/repo/", "git", "https://github.com/owner/repo"),
+        ("https://github.com/owner/repo.git", "git", "https://github.com/owner/repo"),
+        ("https://gitlab.com/group/subgroup/repo", "git", "https://gitlab.com/group/subgroup/repo"),
+        (
+            "https://github.com/owner/repo/tree/main/examples",
+            "git",
+            "https://github.com/owner/repo",
+        ),
+        (
+            "https://github.com/owner/repo/blob/main/README.md",
+            "git",
+            "https://github.com/owner/repo",
+        ),
+        ("https://docs.example.com/quickstart", "docs", None),
+        ("https://example.com", "docs", None),
+        ("https://owner.github.io/project/", "docs", None),
+        ("https://github.com/owner", "unsupported", None),
+        ("https://github.com/", "unsupported", None),
+        ("http://github.com/owner/repo", "unsupported", None),
+        ("git@github.com:owner/repo.git", "unsupported", None),
+        ("ssh://git@github.com/owner/repo.git", "unsupported", None),
+        ("/local/path/to/repo", "unsupported", None),
+        ("file:///tmp/repo", "unsupported", None),
+        ("", "unsupported", None),
+        ("https://evil.example/https://github.com/owner/repo", "unsupported", None),
+    ],
+)
+def test_classify_url_table(url, kind, repo_url):
+    """Table-driven classification for the #194 policy floor."""
+    verdict = classify_url(url)
+    assert verdict.kind == kind
+    assert verdict.repo_url == repo_url
+    assert isinstance(verdict.reason, str)
+
+
+def test_classify_url_evil_embedded_never_git():
+    v = classify_url("https://evil.example/https://github.com/owner/repo")
+    assert v.kind != "git"
+
+
+def test_classify_url_deep_links_reduce_to_root():
+    for url in (
+        "https://github.com/acme/tool/tree/main/examples",
+        "https://github.com/acme/tool/blob/main/README.md",
+    ):
+        v = classify_url(url)
+        assert v.kind == "git"
+        assert v.repo_url == "https://github.com/acme/tool"
+
