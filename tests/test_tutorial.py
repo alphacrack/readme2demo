@@ -456,6 +456,79 @@ def test_tutorial_md_front_matter_and_provenance(tmp_path, monkeypatch):
     assert "generator: readme2demo" in sbs
 
 
+def test_tutorial_md_demo_alt_is_repo_specific(tmp_path, monkeypatch):
+    """Regression (#197): demo.gif alt must include the tutorial title, not a generic constant.
+
+    Every generated tutorial used the same hardcoded alt string, so screen
+    readers (and SEO) could not tell one repo's demo from another.
+    """
+    from readme2demo import llm as llm_mod
+    from readme2demo.tutorial import run_tutorial
+    from readme2demo.types import (
+        AgentResult, CommandLog, Plan, SuccessCriteria, TutorialOutline,
+        TutorialStep,
+    )
+
+    outline = TutorialOutline(
+        title="Install ToolHive",
+        intro="A container tool.",
+        steps=[TutorialStep(title="Run", command="thv --help", explanation="Shows help.")],
+    )
+    monkeypatch.setattr(
+        llm_mod, "complete_json", lambda *a, **k: (outline.model_copy(deep=True), 0.01)
+    )
+    plan = Plan(
+        quickstart_summary="q",
+        success_criteria=SuccessCriteria(command="thv --help"),
+        prereqs=[],
+    )
+    log = CommandLog(engine="claude-code", result=AgentResult(outcome="success"))
+    # has_video is a filesystem check — create a gif so the Demo block renders.
+    (tmp_path / "demo.gif").write_bytes(b"GIF89a" + b"\x00" * 100)
+    run_tutorial(
+        tmp_path, plan, log, outline, "m", verified=True, base_image="img",
+        commit_sha="abc1234", repo_url="https://github.com/stacklok/toolhive",
+    )
+    text = (tmp_path / "tutorial.md").read_text(encoding="utf-8")
+    assert "![Demo video: Install ToolHive" in text
+    assert "every step above executing in a clean container](demo.gif)" in text
+    # Must not ship the old generic-only alt (title missing).
+    assert "![Demo video: every step above executing in a clean container](demo.gif)" not in text
+
+
+def test_tutorial_md_demo_alt_guide_only_has_title(tmp_path, monkeypatch):
+    """Regression (#197): guide-only runs (empty repo_url) still get sensible alt."""
+    from readme2demo import llm as llm_mod
+    from readme2demo.tutorial import run_tutorial
+    from readme2demo.types import (
+        AgentResult, CommandLog, Plan, SuccessCriteria, TutorialOutline,
+        TutorialStep,
+    )
+
+    outline = TutorialOutline(
+        title="Guide-only walkthrough",
+        intro="No repo.",
+        steps=[TutorialStep(title="Run", command="echo hi", explanation="Says hi.")],
+    )
+    monkeypatch.setattr(
+        llm_mod, "complete_json", lambda *a, **k: (outline.model_copy(deep=True), 0.01)
+    )
+    plan = Plan(
+        quickstart_summary="q",
+        success_criteria=SuccessCriteria(command="echo hi"),
+    )
+    log = CommandLog(engine="claude-code", result=AgentResult(outcome="success"))
+    (tmp_path / "demo.gif").write_bytes(b"GIF89a" + b"\x00" * 100)
+    run_tutorial(
+        tmp_path, plan, log, outline, "m", verified=True, base_image="img",
+        commit_sha=None, repo_url="",
+    )
+    text = (tmp_path / "tutorial.md").read_text(encoding="utf-8")
+    assert "![Demo video: Guide-only walkthrough" in text
+    assert "— —" not in text  # no stray double dash from empty fields
+
+
+
 def test_guide_front_matter_does_not_break_tape_parsing(tmp_path):
     from readme2demo.distill import parse_guide_steps
 
