@@ -57,6 +57,10 @@ directly instead of parsing output:
 | `1` | Completed but **UNVERIFIED** — no stage failed, but the replay did not pass. |
 | `2` | A stage failed. |
 
+`report` also shows how long each stage took (from the timestamps already in
+`manifest.json`): a duration column in the human and `--markdown` tables, and
+a numeric `duration_seconds` per stage in `--json` (`null` when unknown).
+
 ```bash
 readme2demo report runs/tool-20260702-... --json && echo "verified" || echo "gate failed"
 ```

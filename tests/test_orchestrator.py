@@ -4,13 +4,14 @@ No docker, no network, no API — stages are monkeypatched.
 """
 
 from pathlib import Path
+import json
 
 import pytest
 
 from readme2demo import ingest as ingest_mod
 from readme2demo.config import Config
-from readme2demo.manifest import STAGES, Manifest
-from readme2demo.orchestrator import Orchestrator, PipelineError, summarize_markdown
+from readme2demo.manifest import STAGES, Manifest, StageRecord
+from readme2demo.orchestrator import Orchestrator, PipelineError, summarize, summarize_markdown
 from readme2demo.types import Plan, SuccessCriteria
 
 
@@ -98,6 +99,82 @@ def test_manifest_skip_counts_as_done(tmp_path: Path):
         m.stage_complete(s)
     m.stage_skip("render", reason="--skip-video")
     assert m.next_stage() == "tutorial"
+
+
+# -- StageRecord.duration_seconds (#200) ----------------------------------------
+# A plain @property (not @computed_field) on purpose: pydantic only serializes
+# computed fields, so this must never change manifest.json's on-disk shape.
+
+
+def test_duration_seconds_completed_stage():
+    """Regression: a completed stage reports elapsed wall-clock seconds."""
+    rec = StageRecord(
+        status="completed",
+        started_at="2026-07-01T10:00:00+00:00",
+        finished_at="2026-07-01T10:00:12.500000+00:00",
+    )
+    assert rec.duration_seconds == pytest.approx(12.5)
+
+
+def test_duration_seconds_still_running_is_none():
+    """Regression: a stage with started_at but no finished_at (still running,
+    or the process died mid-stage) is an unknown duration, not zero."""
+    rec = StageRecord(status="running", started_at="2026-07-01T10:00:00+00:00")
+    assert rec.duration_seconds is None
+
+
+def test_duration_seconds_skipped_without_start_is_none():
+    """Regression: stage_skip sets finished_at without started_at when a stage
+    (e.g. via --skip-video) never actually started. Duration is unknown, not
+    a negative or zero number."""
+    rec = StageRecord(status="skipped", finished_at="2026-07-01T10:00:00+00:00")
+    assert rec.duration_seconds is None
+
+
+def test_duration_seconds_pending_stage_is_none():
+    rec = StageRecord()
+    assert rec.duration_seconds is None
+
+
+def test_duration_seconds_unparseable_timestamp_is_none():
+    """Regression: a hand-edited or corrupt manifest shouldn't raise — an
+    unparseable timestamp is an unknown duration."""
+    rec = StageRecord(status="completed", started_at="not-a-date", finished_at="also-not-a-date")
+    assert rec.duration_seconds is None
+
+
+def test_duration_seconds_negative_span_is_none():
+    """Regression: clock skew or a hand-edited manifest where finished_at
+    precedes started_at must not report a negative duration."""
+    rec = StageRecord(
+        status="completed",
+        started_at="2026-07-01T10:00:10+00:00",
+        finished_at="2026-07-01T10:00:00+00:00",
+    )
+    assert rec.duration_seconds is None
+
+
+def test_duration_seconds_zero_length_stage_is_not_none():
+    """A genuinely sub-second stage (e.g. `normalize`) is real elapsed time,
+    not "unknown" — must not be conflated with the None cases above."""
+    rec = StageRecord(
+        status="completed",
+        started_at="2026-07-01T10:00:00+00:00",
+        finished_at="2026-07-01T10:00:00+00:00",
+    )
+    assert rec.duration_seconds == 0.0
+
+
+def test_duration_seconds_not_serialized_to_manifest_json(tmp_path: Path):
+    """Regression: exposing duration via @computed_field would serialize it
+    into every manifest.json write, changing the on-disk schema of a
+    crash-safe state file for a cosmetic report feature. Must stay a plain
+    property."""
+    m = Manifest.create(tmp_path / "r5", "https://github.com/x/y", "claude-code", "img")
+    m.stage_start("ingest")
+    m.stage_complete("ingest")
+    raw = json.loads((tmp_path / "r5" / "manifest.json").read_text())
+    assert "duration_seconds" not in raw["stages"]["ingest"]
 
 
 # -- orchestrator control flow ---------------------------------------------------
@@ -324,10 +401,10 @@ def test_summarize_markdown_verified_run_full_shape():
     assert "engine `claude-code`" in badge
     assert "total cost $0.1234" in badge
     # Stages table: header + one row per recorded stage, with per-stage cost.
-    assert "| Stage | Status | Cost (USD) | Notes |" in lines
-    assert "| ingest | completed | 0.0021 |  |" in lines
-    assert "| agent | completed | 0.0980 |  |" in lines
-    assert "| verify | completed | 0.0000 |  |" in lines
+    assert "| Stage | Status | Cost (USD) | Duration | Notes |" in lines
+    assert "| ingest | completed | 0.0021 | — |  |" in lines
+    assert "| agent | completed | 0.0980 | — |  |" in lines
+    assert "| verify | completed | 0.0000 | — |  |" in lines
     # Artifact list renders exactly what the caller passed.
     assert "**Artifacts**" in lines
     assert "- tutorial.md" in lines
@@ -355,7 +432,7 @@ def test_summarize_markdown_failed_stage_error_in_notes():
         stages={"agent": {"status": "failed", "error": "exit 127: no engine"}},
     )
     md = summarize_markdown(m, [])
-    assert "| agent | failed | 0.0000 | exit 127: no engine |" in md.splitlines()
+    assert "| agent | failed | 0.0000 | — | exit 127: no engine |" in md.splitlines()
 
 
 def test_summarize_markdown_skip_reason_in_notes():
@@ -363,7 +440,7 @@ def test_summarize_markdown_skip_reason_in_notes():
         stages={"render": {"status": "skipped", "meta": {"reason": "dry-run stop"}}},
     )
     md = summarize_markdown(m, [])
-    assert "| render | skipped | 0.0000 | dry-run stop |" in md.splitlines()
+    assert "| render | skipped | 0.0000 | — | dry-run stop |" in md.splitlines()
 
 
 def test_summarize_markdown_escapes_table_breaking_error_text():
@@ -384,9 +461,46 @@ def test_summarize_markdown_escapes_table_breaking_error_text():
     assert len(rows) == 1  # newlines collapsed — still one table row
     assert "\\|" in rows[0]  # pipe escaped, cell not split
     assert "[openai]" in rows[0]  # brackets survive verbatim
-    assert rows[0].count(" | ") == 3  # exactly 4 cells
+    assert rows[0].count(" | ") == 4  # exactly 5 cells
 
 
 def test_summarize_markdown_no_artifacts_omits_section():
     md = summarize_markdown(make_report_manifest(verified=False, stages={}), [])
     assert "**Artifacts**" not in md
+
+
+def test_summarize_markdown_known_duration_rendered():
+    """Regression: a stage with real timestamps shows a real Duration cell,
+    not the "—" unknown placeholder."""
+    m = make_report_manifest(
+        stages={
+            "ingest": {
+                "status": "completed",
+                "cost_usd": 0.0021,
+                "started_at": "2026-07-10T16:20:12+00:00",
+                "finished_at": "2026-07-10T16:20:23.700000+00:00",
+            },
+        },
+    )
+    md = summarize_markdown(m, [])
+    assert "| ingest | completed | 0.0021 | 11.7s |  |" in md.splitlines()
+
+
+def test_summarize_human_report_shows_duration_column():
+    m = make_report_manifest(
+        stages={
+            "ingest": {
+                "status": "completed",
+                "started_at": "2026-07-10T16:20:12+00:00",
+                "finished_at": "2026-07-10T16:20:24+00:00",
+            },
+            "agent": {"status": "pending"},
+        },
+    )
+    text = summarize(m)
+    lines = text.splitlines()
+    ingest_line = next(ln for ln in lines if ln.strip().startswith("ingest"))
+    agent_line = next(ln for ln in lines if ln.strip().startswith("agent"))
+    assert "12.0s" in ingest_line
+    # A pending stage (no timestamps at all) is unknown, shown as "—".
+    assert "—" in agent_line

@@ -537,7 +537,11 @@ def report(
     if json_output:
         output_data = {
             "stages": [
-                {"name": name, "status": rec.status}
+                {
+                    "name": name,
+                    "status": rec.status,
+                    "duration_seconds": rec.duration_seconds,
+                }
                 for name, rec in manifest.stages.items()
             ],
             "verified": manifest.verified,

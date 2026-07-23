@@ -470,8 +470,42 @@ def test_regression_report_json_with_recorded_stages(tmp_path):
     assert parsed["verified"] is True
     assert parsed["cost"] == 1.5
     assert parsed["commit"] == "abcdef123456"
-    assert {"name": "ingest", "status": "completed"} in parsed["stages"]
-    assert {"name": "agent", "status": "failed"} in parsed["stages"]
+    assert {
+        "name": "ingest",
+        "status": "completed",
+        "duration_seconds": None,
+    } in parsed["stages"]
+    assert {
+        "name": "agent",
+        "status": "failed",
+        "duration_seconds": None,
+    } in parsed["stages"]
+
+
+def test_report_json_includes_known_duration(tmp_path):
+    """Regression (#200): a stage with real timestamps reports a numeric
+    duration_seconds; consumers must not have to parse a string like
+    "1m 25s" out of it."""
+    import json
+
+    manifest_data = {
+        "run_id": "duration-test-run",
+        "verified": True,
+        "stages": {
+            "ingest": {
+                "status": "completed",
+                "started_at": "2026-07-10T16:20:12+00:00",
+                "finished_at": "2026-07-10T16:20:22.5+00:00",
+            },
+        },
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--json"])
+
+    parsed = json.loads(result.output)
+    stage = next(s for s in parsed["stages"] if s["name"] == "ingest")
+    assert stage["duration_seconds"] == pytest.approx(10.5)
 
 
 # -- report exit codes (#85) --------------------------------------------------
@@ -594,8 +628,8 @@ def test_report_markdown_emits_gfm_summary_with_present_artifacts(tmp_path):
     out = result.output
     assert "## readme2demo — glow-20260710-162012-33fc72" in out
     assert "**Verified: yes**" in out
-    assert "| Stage | Status | Cost (USD) | Notes |" in out
-    assert "| ingest | completed | 0.0021 |  |" in out
+    assert "| Stage | Status | Cost (USD) | Duration | Notes |" in out
+    assert "| ingest | completed | 0.0021 | — |  |" in out
     assert "- tutorial.md" in out
     assert "- demo.mp4" in out
     assert "- demo.gif" not in out  # not on disk → not claimed

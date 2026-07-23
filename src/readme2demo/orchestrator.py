@@ -360,6 +360,19 @@ class Orchestrator:
         return self.manifest
 
 
+def _format_duration(seconds: Optional[float]) -> str:
+    """Render a stage duration for human/markdown output.
+
+    ``None`` (unknown duration) renders as a visible placeholder, never a
+    blank or ``0.0s`` -- those would look like data instead of "we don't
+    know". A genuinely sub-second stage still shows a real number (``0.0s``),
+    so it isn't mistaken for "unknown" either.
+    """
+    if seconds is None:
+        return "—"
+    return f"{seconds:.1f}s"
+
+
 def summarize(manifest: Manifest) -> str:
     """Human-readable run report for ``readme2demo report``."""
     repo_line = (
@@ -380,7 +393,8 @@ def summarize(manifest: Manifest) -> str:
         meta = ""
         if rec.meta:
             meta = " " + json.dumps(rec.meta, default=str)
-        lines.append(f"  {name:<10} {rec.status:<10}{meta}{extra}")
+        duration = _format_duration(rec.duration_seconds)
+        lines.append(f"  {name:<10} {rec.status:<10} {duration:<8}{meta}{extra}")
     return "\n".join(lines)
 
 
@@ -417,14 +431,15 @@ def summarize_markdown(manifest: Manifest, artifacts: list[str]) -> str:
         f"{badge} — {repo_part} — engine `{manifest.engine}` — "
         f"total cost ${manifest.total_cost_usd:.4f}",
         "",
-        "| Stage | Status | Cost (USD) | Notes |",
-        "|---|---|---|---|",
+        "| Stage | Status | Cost (USD) | Duration | Notes |",
+        "|---|---|---|---|---|",
     ]
     for name, rec in manifest.stages.items():
         # Failed stages carry `error`; skipped stages carry meta["reason"].
         note = rec.error or rec.meta.get("reason", "")
+        duration = _format_duration(rec.duration_seconds)
         lines.append(
-            f"| {name} | {rec.status} | {rec.cost_usd:.4f} | {_md_cell(note)} |"
+            f"| {name} | {rec.status} | {rec.cost_usd:.4f} | {duration} | {_md_cell(note)} |"
         )
     if artifacts:
         lines += ["", "**Artifacts**", ""]

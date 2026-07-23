@@ -37,6 +37,31 @@ class StageRecord(BaseModel):
     cost_usd: float = 0.0
     meta: dict = Field(default_factory=dict)
 
+    @property
+    def duration_seconds(self) -> Optional[float]:
+        """Elapsed wall-clock time for this stage's last attempt, in seconds.
+
+        Returns ``None`` (not ``0``) whenever the duration isn't knowable:
+        missing ``started_at``/``finished_at``, unparseable timestamps, or a
+        negative span (clock skew / a hand-edited manifest). A plain
+        ``@property`` on purpose -- pydantic only serializes ``@computed_field``s,
+        so this never changes the on-disk shape of ``manifest.json``.
+        """
+        if self.started_at is None or self.finished_at is None:
+            return None
+
+        try:
+            started = datetime.fromisoformat(self.started_at)
+            finished = datetime.fromisoformat(self.finished_at)
+        except ValueError:
+            return None
+
+        elapsed = (finished - started).total_seconds()
+        if elapsed < 0:
+            return None
+
+        return elapsed
+
 
 class Manifest(BaseModel):
     run_id: str
