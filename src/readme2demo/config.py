@@ -7,7 +7,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -52,6 +52,9 @@ class Config(BaseModel):
     verify_retries: int = 1  # plain script retries before distiller feedback loop
     distill_retries: int = 1  # distiller feedback loops on verify failure
     skip_video: bool = False
+    # Selected output formats (registry in formats.py). Surface only in
+    # this slice — the pipeline still keys render off skip_video alone.
+    formats: list[str] = Field(default_factory=lambda: ["demo", "gif"])
 
     # Optional user-supplied step-by-step guide (-s/--step-by-step): injected
     # into the cloned repo so the planner and agent treat it as authoritative,
@@ -71,6 +74,14 @@ class Config(BaseModel):
                 stacklevel=2,
             )
         return data
+
+
+    @field_validator("formats", mode="after")
+    @classmethod
+    def _validate_formats(cls, value: list[str]) -> list[str]:
+        from readme2demo.formats import _validate_format_names
+
+        return _validate_format_names(list(value))
 
     @classmethod
     def load(cls, toml_path: Optional[Path] = None, **overrides: Any) -> "Config":

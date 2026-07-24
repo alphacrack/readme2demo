@@ -35,6 +35,7 @@ provide both. At least one is required.
 | `--anthropic [model]` | Run the sandboxed agent on OpenHands with a Claude model via `ANTHROPIC_API_KEY`. |
 | `--budget-usd` | Abort the run if the agent's cost exceeds this. |
 | `--dry-run` | Stop after ingest/planning with the feasibility verdict and blockers — no agent time spent. |
+| `--formats` | Comma-separated outputs to request (`demo,gif` today; others reserved). |
 | `--skip-video` / `--with-video` | Skip or force VHS rendering. |
 | `--allow-docker-socket` | Mount the host Docker socket into the sandbox. Security tradeoff — trusted repos only. |
 
