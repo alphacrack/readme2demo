@@ -29,11 +29,11 @@ readme2demo run against its own repo: install, run the tests, explore the CLI,
 and read a verified example — each step replayed in a fresh container before
 this was rendered.
 
-![readme2demo self-demo](readme2demo/demo.gif)
+![Verified demo: readme2demo installing and running its own CLI in a clean container](readme2demo/demo.gif)
 
 ### toolhive — another example
 
-![toolhive demo](toolhive/demo.gif)
+![Verified demo: installing and running stacklok/toolhive step by step](toolhive/demo.gif)
 
 ## What's in each folder
 

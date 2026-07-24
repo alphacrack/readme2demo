@@ -1,6 +1,6 @@
 # readme2demo — verified tutorials & demo videos from your README
 
-[![tests](https://github.com/alphacrack/readme2demo/actions/workflows/ci.yml/badge.svg)](https://github.com/alphacrack/readme2demo/actions/workflows/ci.yml)
+[![CI tests status](https://github.com/alphacrack/readme2demo/actions/workflows/ci.yml/badge.svg)](https://github.com/alphacrack/readme2demo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/alphacrack/readme2demo/blob/main/LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://github.com/alphacrack/readme2demo/blob/main/pyproject.toml)
 
@@ -183,9 +183,9 @@ MIT licensed. The CLI and verification pipeline are, and will stay, free and ope
 
 A huge thank you to everyone who has contributed to readme2demo!
 
-[![Contributors](https://img.shields.io/github/contributors/alphacrack/readme2demo?style=flat-square)](https://github.com/alphacrack/readme2demo/graphs/contributors)
+[![Contributor count](https://img.shields.io/github/contributors/alphacrack/readme2demo?style=flat-square)](https://github.com/alphacrack/readme2demo/graphs/contributors)
 
 <a href="https://github.com/alphacrack/readme2demo/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=alphacrack/readme2demo" alt="Contributors" />
+  <img src="https://contrib.rocks/image?repo=alphacrack/readme2demo" alt="Contributor avatars" />
 </a>
 
