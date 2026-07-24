@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] — 2026-07-23
+
+### Fixed
+- A stage that pays for LLM calls and then fails is now billed for that
+  spend: `stage_fail` accumulates `cost_usd` like `stage_complete`, and
+  `DistillError` carries the distiller's grounding-retry cost across the
+  raise. Previously a failed distill — the one run you most want a spend
+  figure for — reported $0.00 (#209, closes #103).
+
+### Changed
+- Docs: `howto.jsonld` added to the README's generated-outputs list and
+  `llm_backend` to its config example (#119, thanks @BenjaminAyivoh1);
+  the architecture diagram, module map, and the debug-run skill now show
+  the real verify → tutorial → render stage order (#211, thanks
+  @professor314).
+
 ## [0.7.2] — 2026-07-21
 
 ### Fixed

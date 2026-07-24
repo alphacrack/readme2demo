@@ -39,6 +39,36 @@ def test_manifest_roundtrip(tmp_path: Path):
     assert loaded.next_stage() == "agent"
 
 
+def test_regression_stage_fail_records_cost_and_updates_total(tmp_path: Path):
+    """Regression (#103): a stage that pays and then fails must not report $0.00.
+
+    The distiller can raise after two paid LLM calls (its grounding retry), so
+    stage_fail accounts spend the same way stage_complete does.
+    """
+    m = Manifest.create(tmp_path / "rf", "https://github.com/x/y", "claude-code", "img")
+    m.stage_start("ingest")
+    m.stage_complete("ingest", cost_usd=0.01)
+    m.stage_start("distill")
+    m.stage_fail("distill", "Distiller produced ungrounded commands", cost_usd=0.04)
+
+    loaded = Manifest.load(tmp_path / "rf")
+    assert loaded.stages["distill"].status == "failed"
+    assert loaded.stages["distill"].cost_usd == pytest.approx(0.04)
+    assert loaded.total_cost_usd == pytest.approx(0.05)
+
+
+def test_stage_fail_without_cost_leaves_total_unchanged(tmp_path: Path):
+    """A failure with no recoverable spend must not perturb the total (#103)."""
+    m = Manifest.create(tmp_path / "rg", "https://github.com/x/y", "claude-code", "img")
+    m.stage_start("ingest")
+    m.stage_complete("ingest", cost_usd=0.02)
+    m.stage_start("agent")
+    m.stage_fail("agent", "engine exited 127")
+
+    assert m.stages["agent"].cost_usd == 0.0
+    assert m.total_cost_usd == pytest.approx(0.02)
+
+
 def test_manifest_next_stage_order(tmp_path: Path):
     m = Manifest.create(tmp_path / "r2", "https://github.com/x/y", "claude-code", "img")
     for s in STAGES:
@@ -137,6 +167,42 @@ def test_resume_skips_completed_stages(tmp_path: Path, monkeypatch):
     orch = Orchestrator.resume(run_dir, cfg)
     result = orch.run()  # nothing left to do — must be a no-op
     assert result.next_stage() is None
+
+
+def test_regression_failed_distill_bills_its_llm_spend(tmp_path: Path, monkeypatch):
+    """Regression (#103): a DistillError after paid calls lands on the manifest.
+
+    The distiller's grounding retry means failure can arrive after two LLM
+    calls. Before this fix the orchestrator called stage_fail without a cost,
+    so the run that most needs a spend figure reported $0.00.
+    """
+    from readme2demo import distill as distill_mod
+    from readme2demo.distill import DistillError
+    from readme2demo.types import AgentResult, CommandLog
+
+    cfg = Config(runs_dir=tmp_path)
+    orch = Orchestrator.new_run("https://github.com/x/y", cfg)
+    (orch.run_dir / "plan.json").write_text(make_plan().model_dump_json())
+    (orch.run_dir / "command_log.json").write_text(
+        CommandLog(
+            engine="claude-code", result=AgentResult(outcome="success")
+        ).model_dump_json()
+    )
+    for s in ("ingest", "agent", "normalize"):
+        orch.manifest.stage_start(s)
+        orch.manifest.stage_complete(s, cost_usd=0.01)
+
+    def boom(*args, **kwargs):
+        raise DistillError("ungrounded after retry", cost_usd=0.06)
+
+    monkeypatch.setattr(distill_mod, "distill", boom)
+    with pytest.raises(DistillError):
+        orch.run()
+
+    loaded = Manifest.load(orch.run_dir)
+    assert loaded.stages["distill"].status == "failed"
+    assert loaded.stages["distill"].cost_usd == pytest.approx(0.06)
+    assert loaded.total_cost_usd == pytest.approx(0.09)  # 3 x 0.01 + 0.06
 
 
 def test_new_run_guide_only_uses_guide_stem_and_empty_repo(tmp_path: Path):
