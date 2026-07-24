@@ -9,8 +9,37 @@ abstract: >-
   fresh container did not independently execute.
 type: software
 authors:
-  - name: "readme2demo contributors"
+  # GitHub contributors (handles), maintainer first — see the contributors graph.
+  - name: "alphacrack"
     alias: alphacrack
+  - name: "ulises-jeremias"
+    alias: ulises-jeremias
+  - name: "Garifallos"
+    alias: Garifallos
+  - name: "professor314"
+    alias: professor314
+  - name: "BenjaminAyivoh1"
+    alias: BenjaminAyivoh1
+  - name: "pollychen-lab"
+    alias: pollychen-lab
+  - name: "Sanjays2402"
+    alias: Sanjays2402
+  - name: "hkJerryLeung"
+    alias: hkJerryLeung
+  - name: "Amilliox"
+    alias: Amilliox
+  - name: "Rahul-pamula"
+    alias: Rahul-pamula
+  - name: "innovationty"
+    alias: innovationty
+  - name: "cnYui"
+    alias: cnYui
+  - name: "adjenk"
+    alias: adjenk
+  - name: "cen-zp"
+    alias: cen-zp
+  - name: "veronica-foltz"
+    alias: veronica-foltz
 repository-code: "https://github.com/alphacrack/readme2demo"
 url: "https://github.com/alphacrack/readme2demo"
 license: MIT
