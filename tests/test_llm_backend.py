@@ -342,6 +342,12 @@ def test_anthropic_default_model_matches_config():
     assert llm.PROVIDERS["anthropic"].default_model == Config().model
 
 
+def test_extract_json_accepts_single_line_fenced_json():
+    text = 'diagnostic {not json} ```json {"ok": true}```'
+
+    assert llm.extract_json(text) == '{"ok": true}'
+
+
 # -- openai backend -----------------------------------------------------------------
 
 
