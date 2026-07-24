@@ -741,5 +741,7 @@ def test_unverified_completion_prints_from_stage_distill(tmp_path, monkeypatch):
     monkeypatch.setattr("readme2demo.cli._preflight", lambda cfg: None)
 
     result = runner.invoke(app, ["resume", str(run_dir)])
-    assert "--from-stage distill" in result.output
-    assert "UNVERIFIED" in result.output or "unverified" in result.output.lower()
+    # Rich may soft-wrap long absolute paths; compare collapsed whitespace.
+    collapsed = " ".join(result.output.split())
+    assert "--from-stage distill" in collapsed
+    assert "UNVERIFIED" in collapsed or "unverified" in collapsed.lower()
