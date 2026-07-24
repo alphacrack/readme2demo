@@ -189,3 +189,10 @@ A huge thank you to everyone who has contributed to readme2demo!
   <img src="https://contrib.rocks/image?repo=alphacrack/readme2demo" alt="Contributors" />
 </a>
 
+## Setup
+
+Copy the example environment file and adjust values:
+
+```bash
+cp .env.example .env
+```
