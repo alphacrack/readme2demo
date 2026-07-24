@@ -331,6 +331,12 @@ def test_version_flag():
     assert result.output.strip() != ""
 
 
+def test_run_output_dir_has_short_alias():
+    cmd = typer.main.get_command(app)
+    opts = {o for p in cmd.commands["run"].params for o in p.opts + p.secondary_opts}
+    assert "-o" in opts and "--output-dir" in opts
+
+
 def test_resume_rejects_missing_run_dir(tmp_path):
     missing = tmp_path / "missing-run"
     result = runner.invoke(app, ["resume", str(missing)])

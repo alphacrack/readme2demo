@@ -305,7 +305,7 @@ def run(
     ),
     engine: Optional[str] = typer.Option(None, help="Agent engine: claude-code | openhands"),
     model: Optional[str] = typer.Option(None, help="Model for planner/distiller/tutorial passes"),
-    output_dir: Optional[Path] = typer.Option(None, "--output-dir", help="Runs directory"),
+    output_dir: Optional[Path] = typer.Option(None, "-o", "--output-dir", help="Runs directory"),
     timeout: Optional[int] = typer.Option(None, help="Agent wall-clock timeout (s)"),
     budget_usd: Optional[float] = typer.Option(None, help="Abort if agent cost exceeds this"),
     max_turns: Optional[int] = typer.Option(None, help="Agent max turns"),
