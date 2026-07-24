@@ -375,6 +375,57 @@ def test_regression_missing_openai_sdk_fails_preflight(monkeypatch, capsys):
     assert "readme2demo[openai]" in capsys.readouterr().out
 
 
+def test_regression_dry_run_preflight_skips_engine_auth_and_docker(monkeypatch, capsys):
+    """Regression (#220): --dry-run stops after ingest/planning, so preflight
+    must not demand the agent credential, the sandbox image, or the Docker CLI
+    it never uses. With no engine credential and no docker on PATH, a dry-run
+    preflight must pass; the whole point of --dry-run is a cheap feasibility
+    check before committing a key and a Docker environment.
+    """
+    import shutil as shutil_mod
+
+    from readme2demo import cli as cli_mod
+    from readme2demo import llm
+    from readme2demo.config import Config
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    # claude CLI present (planner backend resolves), docker absent. Note
+    # readme2demo.llm.shutil and cli's shutil are the same module object, so a
+    # single selective which() serves both lookups.
+    monkeypatch.setattr(
+        shutil_mod, "which", lambda name: "/usr/bin/claude" if name == "claude" else None
+    )
+    try:
+        cli_mod._preflight(Config(dry_run=True))  # must NOT raise
+    finally:
+        llm.set_backend("auto")
+    out = capsys.readouterr().out
+    assert "ANTHROPIC_API_KEY" not in out
+    assert "docker CLI not found" not in out
+
+
+def test_non_dry_run_still_requires_engine_credential(monkeypatch, capsys):
+    """The dry-run skip must not weaken a real run: without the credential a
+    non-dry-run preflight still fails (#220)."""
+    import shutil as shutil_mod
+
+    from readme2demo import cli as cli_mod
+    from readme2demo import llm
+    from readme2demo.config import Config
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr("readme2demo.llm.shutil.which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    try:
+        with pytest.raises(typer.Exit):
+            cli_mod._preflight(Config(dry_run=False))
+    finally:
+        llm.set_backend("auto")
+    assert "ANTHROPIC_API_KEY" in capsys.readouterr().out
+
+
 def test_preflight_rejects_unknown_backend_cleanly(monkeypatch, capsys):
     # A bad llm_backend in readme2demo.toml must be a clean preflight ✗,
     # not an unhandled LLMError traceback (set_backend sits inside the try).
