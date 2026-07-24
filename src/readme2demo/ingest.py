@@ -16,6 +16,8 @@ of burning an agent run.
 
 from __future__ import annotations
 
+import warnings
+
 import json
 import re
 import subprocess
@@ -50,6 +52,56 @@ _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 class IngestError(RuntimeError):
     """Raised when cloning or planning cannot proceed (bad URL, git failure)."""
 
+# GitHub deep-link path segments that are NOT GitLab-style subgroups.
+_GITHUB_DEEP_LINK_MARKERS = frozenset({
+    "tree", "blob", "commit", "pulls", "pull", "issues", "wiki",
+    "releases", "actions", "settings", "projects", "network", "security",
+    "pulse", "graphs", "raw", "blame",
+})
+
+
+def _normalize_clone_url(repo_url: str) -> tuple[str, str | None]:
+    """Return (cloneable_url, optional_user_note) for a validated forge URL.
+
+    GitHub deep links (``/tree/...``, ``/blob/...``) are stripped to the
+    repository root with a note. Other hosts keep the permissive subgroup
+    behavior (GitLab subgroups are legitimate path segments).
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(repo_url.strip())
+    host = (parsed.hostname or "").casefold()
+    if host.startswith("www."):
+        host = host[4:]
+    path = (parsed.path or "").strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    segments = [s for s in path.split("/") if s]
+
+    if host == "github.com" and len(segments) >= 2:
+        # owner/repo[/deep-link...]
+        owner, repo = segments[0], segments[1]
+        rest = segments[2:]
+        if rest and rest[0].lower() in _GITHUB_DEEP_LINK_MARKERS:
+            root = f"https://github.com/{owner}/{repo}"
+            note = (
+                f"Note: {repo_url!r} looks like a GitHub deep link "
+                f"(/{rest[0]}/...); cloning the repository root {root} instead."
+            )
+            return root, note
+        if len(segments) > 2 and rest[0].lower() not in _GITHUB_DEEP_LINK_MARKERS:
+            # Unusual extra path on github without a known marker — still
+            # clone root with a note rather than raw git failure.
+            if rest:
+                root = f"https://github.com/{owner}/{repo}"
+                note = (
+                    f"Note: {repo_url!r} has extra path segments after the "
+                    f"repo root; cloning {root} instead."
+                )
+                return root, note
+
+    return repo_url.rstrip("/"), None
+
 
 def clone_repo(repo_url: str, dest: Path, timeout: int = 300) -> str:
     """Shallow-clone ``repo_url`` into ``dest`` and return the HEAD commit sha.
@@ -63,10 +115,11 @@ def clone_repo(repo_url: str, dest: Path, timeout: int = 300) -> str:
             f"Invalid repo URL: {repo_url!r} — expected "
             "https://github.com/<owner>/<repo> or https://gitlab.com/<owner>/<repo>"
         )
+    clone_url, deep_link_note = _normalize_clone_url(repo_url)
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         proc = subprocess.run(
-            ["git", "clone", "--depth", "1", repo_url, str(dest)],
+            ["git", "clone", "--depth", "1", clone_url, str(dest)],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -77,9 +130,15 @@ def clone_repo(repo_url: str, dest: Path, timeout: int = 300) -> str:
     except FileNotFoundError as e:
         raise IngestError("git not found — install git and ensure it is on PATH") from e
     if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        hint = ""
+        if deep_link_note:
+            hint = f" ({deep_link_note})"
         raise IngestError(
-            f"git clone failed ({proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}"
+            f"git clone failed ({proc.returncode}): {detail}{hint}"
         )
+    if deep_link_note:
+        warnings.warn(deep_link_note, UserWarning, stacklevel=2)
     rev = subprocess.run(
         ["git", "-C", str(dest), "rev-parse", "HEAD"],
         capture_output=True,

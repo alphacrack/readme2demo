@@ -385,3 +385,67 @@ def test_ingest_no_repo_and_no_guide_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest_mod, "clone_repo", boom_clone)
     with pytest.raises(IngestError, match="Nothing to ingest"):
         ingest_mod.ingest(None, tmp_path / "run", "m", guide_file=None)
+
+
+# -- GitHub deep-link normalization (#109) ------------------------------------
+
+
+def test_normalize_github_deep_link_strips_tree():
+    """Regression (#109): browser /tree/ URLs clone the repo root, not die raw."""
+    from readme2demo.ingest import _normalize_clone_url
+
+    url, note = _normalize_clone_url(
+        "https://github.com/owner/repo/tree/main/examples"
+    )
+    assert url == "https://github.com/owner/repo"
+    assert note is not None
+    assert "deep link" in note.lower() or "tree" in note.lower()
+
+
+def test_normalize_github_deep_link_strips_blob():
+    from readme2demo.ingest import _normalize_clone_url
+
+    url, note = _normalize_clone_url(
+        "https://github.com/owner/repo/blob/main/README.md"
+    )
+    assert url == "https://github.com/owner/repo"
+    assert note is not None
+
+
+def test_normalize_gitlab_subgroup_preserved():
+    """Regression (#109): GitLab subgroups must still be accepted as-is."""
+    from readme2demo.ingest import _normalize_clone_url
+
+    url = "https://gitlab.com/group/subgroup/repo"
+    out, note = _normalize_clone_url(url)
+    assert out.rstrip("/") == url
+    assert note is None
+
+
+def test_clone_repo_uses_root_for_github_deep_link(tmp_path, monkeypatch):
+    """Regression (#109): clone argv must use the stripped root URL."""
+    from readme2demo import ingest as ingest_mod
+    import subprocess
+
+    captured = {}
+
+    def fake_run(cmd, **kw):
+        captured.setdefault("cmds", []).append(cmd)
+        if cmd[:2] == ["git", "clone"]:
+            dest = Path(cmd[-1])
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / ".git").mkdir(exist_ok=True)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if "rev-parse" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="abc1234\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(ingest_mod.subprocess, "run", fake_run)
+    sha = ingest_mod.clone_repo(
+        "https://github.com/owner/repo/tree/main/examples",
+        tmp_path / "repo",
+    )
+    assert sha.strip() == "abc1234"
+    clone_cmd = captured["cmds"][0]
+    assert "https://github.com/owner/repo" in clone_cmd
+    assert "tree" not in " ".join(clone_cmd)
