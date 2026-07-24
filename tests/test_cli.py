@@ -299,7 +299,9 @@ def test_run_rejects_missing_config_file_before_preflight(tmp_path):
     result = runner.invoke(app, ["run", _URL, "--config", str(missing)])
 
     assert result.exit_code != 0
-    assert "does not exist" in result.output
+    # Rich may soft-wrap long absolute paths; compare normalized output.
+    normalized = result.output.replace("│", " ")
+    assert "does not exist" in " ".join(normalized.split())
 
 
 def test_run_reports_unknown_config_key_without_traceback(tmp_path):
@@ -335,7 +337,9 @@ def test_resume_rejects_missing_run_dir(tmp_path):
     missing = tmp_path / "missing-run"
     result = runner.invoke(app, ["resume", str(missing)])
     assert result.exit_code != 0
-    assert "does not exist" in result.output
+    # Rich may soft-wrap long absolute paths; compare normalized output.
+    normalized = result.output.replace("│", " ")
+    assert "does not exist" in " ".join(normalized.split())
 
 
 def test_resume_rejects_file_run_dir(tmp_path):
