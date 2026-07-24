@@ -584,18 +584,24 @@ def _preflight(cfg: Config) -> None:
     except LLMError as e:
         problems.append(str(e))
 
-    # Agent engine auth (forwarded into the sandbox) + sandbox image probe:
-    # an image without the engine's runtime dies mid-run with a bare exit 127
-    # and no transcript, so it must be caught here, before agent time is spent.
-    try:
-        engine = get_engine(cfg.engine)
-        engine.resolve_env()
-        engine.check_image(cfg.base_image)
-    except EngineError as e:
-        problems.append(str(e))
+    # Agent engine auth (forwarded into the sandbox), sandbox image probe, and
+    # the Docker CLI are only exercised once the agent stage runs. A --dry-run
+    # stops after ingest/planning (never starts a sandbox, never touches
+    # Docker), so requiring them there would defeat the feature — its whole
+    # point is a cheap feasibility check before you commit a credential and a
+    # Docker environment. A real run still preflights all three.
+    if not cfg.dry_run:
+        try:
+            engine = get_engine(cfg.engine)
+            engine.resolve_env()
+            engine.check_image(cfg.base_image)
+        except EngineError as e:
+            problems.append(str(e))
 
-    if shutil.which("docker") is None:
-        problems.append("docker CLI not found on PATH — install Docker Desktop and retry.")
+        if shutil.which("docker") is None:
+            problems.append(
+                "docker CLI not found on PATH — install Docker Desktop and retry."
+            )
 
     if problems:
         for p in problems:
