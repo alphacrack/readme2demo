@@ -551,7 +551,7 @@ def test_cli_backend_error_envelope(monkeypatch):
             cmd, 0, stdout=_fake_cli_envelope("rate limited", is_error=True), stderr=""
         ),
     )
-    with pytest.raises(LLMError, match="reported an error"):
+    with pytest.raises(LLMError, match=r"reported an error.*--llm-backend api"):
         llm._complete_cli("s", "u", "m")
 
 
@@ -561,7 +561,7 @@ def test_cli_backend_nonzero_exit(monkeypatch):
         "readme2demo.llm.subprocess.run",
         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom"),
     )
-    with pytest.raises(LLMError, match="failed"):
+    with pytest.raises(LLMError, match=r"failed.*--llm-backend api"):
         llm._complete_cli("s", "u", "m")
 
 
@@ -975,3 +975,40 @@ def test_render_socket_includes_group_add(tmp_path, monkeypatch):
     render_mod.run_render(tmp_path, Config(allow_docker_socket=True))
     assert "--group-add" in captured["cmd"]
     assert "999" in captured["cmd"]
+
+
+def test_cli_timeout_error_includes_next_step_hint(monkeypatch):
+    """Regression: claude -p failures should hint login AND --llm-backend api."""
+    import subprocess
+    from readme2demo import llm as llm_mod
+
+    def boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd=["claude", "-p"], timeout=1)
+
+    monkeypatch.setattr(llm_mod.shutil, "which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr(llm_mod.subprocess, "run", boom)
+    with pytest.raises(
+        llm_mod.LLMError,
+        match=r"timed out.*claude -p hello.*--llm-backend api",
+    ):
+        llm_mod._complete_cli("sys", "user", "")
+
+
+def test_cli_nonjson_error_includes_next_step_hint(monkeypatch):
+    """Regression: non-JSON claude -p output carries the same next-step hint."""
+    import subprocess
+    from readme2demo import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.shutil, "which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr(
+        llm_mod.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            ["claude"], 0, stdout="not-json{", stderr=""
+        ),
+    )
+    with pytest.raises(
+        llm_mod.LLMError,
+        match=r"non-JSON.*--llm-backend api",
+    ):
+        llm_mod._complete_cli("sys", "user", "")
