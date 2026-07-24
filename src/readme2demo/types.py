@@ -30,6 +30,7 @@ SCHEMA_VERSION = 1
 
 Phase = Literal["explore", "setup", "demo", "fix", "unknown"]
 Outcome = Literal["success", "blocked", "failed"]
+SourceKind = Literal["git", "docs", "unsupported"]
 
 # Sentinel markers the agent prompt instructs the agent to print.
 SUCCESS_MARKER = "R2D_SUCCESS"
@@ -40,6 +41,18 @@ FIX_MARKER = "FIX:"
 # makes the original impossible (e.g. `--help` requiring a Docker daemon).
 ADJUSTED_MARKER = "ADJUSTED_SUCCESS:"
 
+
+class UrlVerdict(BaseModel):
+    """Result of pure URL classification for future docs-site ingestion (#67).
+
+    ``kind`` is the coarse class; ``repo_url`` is a cloneable repository root when
+    ``kind == "git"`` (deep links are reduced to that root). ``reason`` is a short
+    human-readable explanation suitable for error messages.
+    """
+
+    kind: SourceKind
+    repo_url: Optional[str] = None
+    reason: str = ""
 
 class SuccessCriteria(BaseModel):
     """Machine-checkable definition of 'the quickstart works'.
