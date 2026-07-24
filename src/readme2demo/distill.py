@@ -353,13 +353,27 @@ def run_distiller(
 def _grep_flags_and_pattern(pattern: str) -> tuple[str, str]:
     """Translate a Python-style regex to grep -E usage.
 
-    GNU grep -E does not understand inline flags like ``(?i)``; the planner
-    (an LLM) writes Python-style patterns. Handle the common case by
-    stripping a leading ``(?i)`` and adding grep's ``-i`` flag.
+    GNU grep -E does not understand Python inline flags like ``(?i)`` /
+    ``(?is)``. Strip a leading ``(?...)`` group: map ``i`` to grep's ``-i``,
+    drop ``m``/``s`` (grep -E is line-oriented anyway), and raise
+    :class:`DistillError` for ``x`` (verbose) patterns — those would silently
+    fail at verify time if passed through.
     """
-    if pattern.startswith("(?i)"):
-        return "-qiE", pattern[4:]
-    return "-qE", pattern
+    m = re.match(r"^\(\?([a-zA-Z]+)\)(.*)$", pattern, flags=re.DOTALL)
+    if not m:
+        return "-qE", pattern
+    flags, body = m.group(1), m.group(2)
+    # Reject extended/verbose mode — no faithful grep equivalent for (?x).
+    if "x" in flags.lower():
+        raise DistillError(
+            f"success pattern uses Python (?x) verbose mode, which grep -E "
+            f"cannot express: {pattern!r}. Rewrite without (?x) (use a "
+            f"compact pattern) so the verify assertion can run."
+        )
+    # i → case-insensitive; m/s ignored (line-oriented grep, DOTALL N/A)
+    ignore_case = "i" in flags.lower()
+    flag_str = "-qiE" if ignore_case else "-qE"
+    return flag_str, body
 
 
 def _tolerate_findings_steps(commands: list[str], log: CommandLog | None) -> list[str]:
