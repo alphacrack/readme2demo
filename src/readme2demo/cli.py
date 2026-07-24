@@ -25,7 +25,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from readme2demo.config import Config
-from readme2demo.manifest import STAGES, Manifest
+from readme2demo.manifest import STAGES, Manifest, stage_duration
 from readme2demo.orchestrator import (
     Orchestrator,
     PipelineError,
@@ -537,7 +537,11 @@ def report(
     if json_output:
         output_data = {
             "stages": [
-                {"name": name, "status": rec.status}
+                {
+                    "name": name,
+                    "status": rec.status,
+                    "duration_seconds": stage_duration(rec),
+                }
                 for name, rec in manifest.stages.items()
             ],
             "verified": manifest.verified,

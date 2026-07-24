@@ -9,7 +9,7 @@ import pytest
 
 from readme2demo import ingest as ingest_mod
 from readme2demo.config import Config
-from readme2demo.manifest import STAGES, Manifest
+from readme2demo.manifest import STAGES, Manifest, StageRecord, stage_duration
 from readme2demo.orchestrator import Orchestrator, PipelineError, summarize_markdown
 from readme2demo.types import Plan, SuccessCriteria
 
@@ -98,6 +98,39 @@ def test_manifest_skip_counts_as_done(tmp_path: Path):
         m.stage_complete(s)
     m.stage_skip("render", reason="--skip-video")
     assert m.next_stage() == "tutorial"
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        (StageRecord(started_at="2026-07-21T12:00:00+00:00", finished_at="2026-07-21T12:01:25+00:00"), 85.0),
+        (StageRecord(finished_at="2026-07-21T12:01:25+00:00"), None),
+        (StageRecord(started_at="2026-07-21T12:00:00+00:00"), None),
+        (StageRecord(started_at="not-a-date", finished_at="2026-07-21T12:01:25+00:00"), None),
+        (StageRecord(started_at="2026-07-21T12:01:25+00:00", finished_at="2026-07-21T12:00:00+00:00"), None),
+    ],
+)
+def test_regression_stage_duration_handles_unknown_timestamps(record, expected):
+    """Regression: report must not invent zero-duration stages from bad timestamps."""
+    assert stage_duration(record) == expected
+
+
+def test_regression_stage_duration_does_not_change_manifest_schema():
+    """Regression: cosmetic report timing must never be persisted in manifest.json."""
+    manifest = Manifest.model_validate(
+        {
+            "run_id": "schema-test",
+            "stages": {
+                "ingest": {
+                    "status": "completed",
+                    "started_at": "2026-07-21T12:00:00+00:00",
+                    "finished_at": "2026-07-21T12:00:01+00:00",
+                }
+            },
+        }
+    )
+    assert stage_duration(manifest.stages["ingest"]) == 1.0
+    assert "duration_seconds" not in manifest.model_dump()["stages"]["ingest"]
 
 
 # -- orchestrator control flow ---------------------------------------------------
@@ -305,7 +338,11 @@ def make_report_manifest(**overrides) -> Manifest:
         "total_cost_usd": 0.1234,
         "stages": {
             "ingest": {"status": "completed", "cost_usd": 0.0021},
-            "agent": {"status": "completed", "cost_usd": 0.098},
+            "agent": {
+                "status": "completed", "cost_usd": 0.098,
+                "started_at": "2026-07-21T12:00:00+00:00",
+                "finished_at": "2026-07-21T12:01:25+00:00",
+            },
             "verify": {"status": "completed"},
         },
         **overrides,
@@ -324,10 +361,10 @@ def test_summarize_markdown_verified_run_full_shape():
     assert "engine `claude-code`" in badge
     assert "total cost $0.1234" in badge
     # Stages table: header + one row per recorded stage, with per-stage cost.
-    assert "| Stage | Status | Cost (USD) | Notes |" in lines
-    assert "| ingest | completed | 0.0021 |  |" in lines
-    assert "| agent | completed | 0.0980 |  |" in lines
-    assert "| verify | completed | 0.0000 |  |" in lines
+    assert "| Stage | Status | Duration | Cost (USD) | Notes |" in lines
+    assert "| ingest | completed | — | 0.0021 |  |" in lines
+    assert "| agent | completed | 1m 25s | 0.0980 |  |" in lines
+    assert "| verify | completed | — | 0.0000 |  |" in lines
     # Artifact list renders exactly what the caller passed.
     assert "**Artifacts**" in lines
     assert "- tutorial.md" in lines
@@ -355,7 +392,7 @@ def test_summarize_markdown_failed_stage_error_in_notes():
         stages={"agent": {"status": "failed", "error": "exit 127: no engine"}},
     )
     md = summarize_markdown(m, [])
-    assert "| agent | failed | 0.0000 | exit 127: no engine |" in md.splitlines()
+    assert "| agent | failed | — | 0.0000 | exit 127: no engine |" in md.splitlines()
 
 
 def test_summarize_markdown_skip_reason_in_notes():
@@ -363,7 +400,7 @@ def test_summarize_markdown_skip_reason_in_notes():
         stages={"render": {"status": "skipped", "meta": {"reason": "dry-run stop"}}},
     )
     md = summarize_markdown(m, [])
-    assert "| render | skipped | 0.0000 | dry-run stop |" in md.splitlines()
+    assert "| render | skipped | — | 0.0000 | dry-run stop |" in md.splitlines()
 
 
 def test_summarize_markdown_escapes_table_breaking_error_text():
@@ -384,7 +421,7 @@ def test_summarize_markdown_escapes_table_breaking_error_text():
     assert len(rows) == 1  # newlines collapsed — still one table row
     assert "\\|" in rows[0]  # pipe escaped, cell not split
     assert "[openai]" in rows[0]  # brackets survive verbatim
-    assert rows[0].count(" | ") == 3  # exactly 4 cells
+    assert rows[0].count(" | ") == 4  # exactly 5 cells
 
 
 def test_summarize_markdown_no_artifacts_omits_section():
