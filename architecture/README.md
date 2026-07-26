@@ -33,17 +33,17 @@ flowchart TD
         V["FRESH container replays commands.sh<br/>exit 0 + R2D_VERIFY_OK required<br/>fail → one distiller feedback loop"]
     end
 
-    subgraph M7["render"]
-        R["VHS executes demo.tape for real<br/>→ demo.mp4 (+ 30s gif preview)<br/>duration gate: video ≥ tape lower bound"]
+    subgraph M7["tutorial"]
+        T["LLM polish (commands code-locked)<br/>→ tutorial.md · step_by_step.md<br/>→ troubleshooting.md · howto.jsonld"]
     end
 
-    subgraph M8["tutorial"]
-        T["LLM polish (commands code-locked)<br/>→ tutorial.md · step_by_step.md<br/>→ troubleshooting.md · howto.jsonld"]
+    subgraph M8["render"]
+        R["VHS executes demo.tape for real<br/>→ demo.mp4 (+ 30s gif preview)<br/>duration gate: video ≥ tape lower bound"]
     end
 
     I -->|plan.json| A -->|transcript.ndjson| N -->|command_log.json| D
     D -->|commands.sh| V
-    V -->|verified ✅| R --> T
+    V -->|verified ✅| T --> R
     V -.->|"unverified → render SKIPPED,<br/>docs labeled ⚠ UNVERIFIED"| T
     I -.->|"infeasible (creds/GPU/GUI)<br/>→ blocked report, $0.01 spent"| X["stop"]
 ```
@@ -123,8 +123,8 @@ sequenceDiagram
 | normalize | `normalize.py` | no — pure | deterministic parsing; cheat/pattern/coverage checks live here |
 | distill | `distill.py` | one call | grounding enforced in code; tape derived from step_by_step.md |
 | verify | `verify.py` | no | fresh container, zero agent state; the only source of "✅ verified" |
-| render | `render.py` | no | video duration must cover the tape; incomplete video = hard fail |
 | tutorial | `tutorial.py` | polish call | commands/outputs restored from verified data regardless of LLM output |
+| render | `render.py` | no | video duration must cover the tape; incomplete video = hard fail |
 
 Engines are plugins (`engines/base.py`): `claude-code` (default) and
 `openhands` (experimental) both normalize to the same `command_log.json` —
