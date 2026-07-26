@@ -391,6 +391,52 @@ def _tolerate_findings_steps(commands: list[str], log: CommandLog | None) -> lis
     return out_lines
 
 
+def _bare_cd(cmd: str) -> bool:
+    """True if ``cmd`` only changes directory — no side effect a later step needs."""
+    segs = [s.strip() for s in _CHAIN_SPLIT_RE.split(normalize_cmd(cmd)) if s.strip()]
+    return bool(segs) and all(s == "cd" or s.startswith("cd ") for s in segs)
+
+
+def _dedup_success_command(
+    commands: list[str], criteria_command: str, log: "CommandLog | None" = None
+) -> list[str]:
+    """Drop the setup step that duplicates the success command (#222).
+
+    ``commands.sh`` runs every setup step and then the assertion re-runs the
+    success command. When that command is non-idempotent — a scaffolder like
+    ``deepsec init`` / ``create-next-app`` / ``terraform init`` that refuses a
+    non-empty target — the assertion's re-run fails on the state the setup step
+    already created, so verify fails even though the tool works.
+
+    Fix: if a setup step's ``&&``-chain ends with the success command's chain,
+    remove that one step so the command runs exactly once (in the assertion,
+    against a clean state). Only the tail is touched, and only when every step
+    after the match is a bare ``cd`` — so nothing a later step depends on is
+    removed, and grounding is intact: the command still executes in the fresh
+    container, just once.
+
+    Findings-success commands (drift scanners, linters that exit nonzero ON
+    success) are left alone: they are idempotent read-only scans, running one
+    twice is harmless, and ``_tolerate_findings_steps`` already makes the setup
+    copy tolerant. Deduping them would needlessly disturb that path.
+    """
+    crit = [s.strip() for s in _CHAIN_SPLIT_RE.split(normalize_cmd(criteria_command)) if s.strip()]
+    # A criterion that is only cd/comment carries no demo action to dedup.
+    if not crit or all(s == "cd" or s.startswith(("cd ", "#")) for s in crit):
+        return commands
+    findings = {normalize_cmd(e.cmd) for e in log.entries if e.findings_success} if log else set()
+    findings |= {c.split("|", 1)[0].strip() for c in findings}
+    if crit[-1] in findings or normalize_cmd(criteria_command) in findings:
+        return commands  # idempotent findings scan — the `|| true` path owns it
+    for i in range(len(commands) - 1, -1, -1):
+        segs = [s.strip() for s in _CHAIN_SPLIT_RE.split(normalize_cmd(commands[i])) if s.strip()]
+        if len(segs) >= len(crit) and segs[-len(crit):] == crit:
+            if all(_bare_cd(c) for c in commands[i + 1:]):
+                return commands[:i] + commands[i + 1:]
+            return commands  # real work follows the match — safer to keep it
+    return commands
+
+
 def _render_commands_sh(out: DistillOutput, plan: Plan, repo_url: str, log: "CommandLog | None" = None) -> str:
     """Build the commands.sh text: header, clone preamble, commands, assertion.
 
@@ -417,8 +463,12 @@ def _render_commands_sh(out: DistillOutput, plan: Plan, repo_url: str, log: "Com
     if repo_url:
         lines.append(f"git clone --depth 1 {shlex.quote(repo_url)} .")
     lines.append("")
-    lines.extend(_tolerate_findings_steps(out.commands, log))
     criteria = plan.success_criteria
+    # The success command runs once — in the assertion below. Drop any setup
+    # step that duplicates it, so a non-idempotent scaffolder doesn't fail the
+    # assertion's re-run after setup already ran it (#222).
+    setup = _dedup_success_command(out.commands, criteria.command, log)
+    lines.extend(_tolerate_findings_steps(setup, log))
     # The criteria command's exit code must NOT abort the script under set -e:
     # findings tools (drift detectors, linters, scanners) exit nonzero when
     # they find what the demo exists to show. With an expected_pattern, the
