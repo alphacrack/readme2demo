@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] — 2026-07-24
+
+### Fixed
+- Verify no longer fails when the success command is a non-idempotent
+  scaffolder (`X init` / `create-next-app` / `terraform init`): the command
+  ran as both the last setup step and the assertion, so the assertion's
+  re-run failed on the state setup created. It now runs exactly once, in the
+  assertion, against a clean state — grounding unchanged (#224, closes #222).
+
+### Changed
+- `CITATION.cff` credits the current 15 contributors instead of a placeholder
+  author (#226, closes #225).
+
 ## [0.7.3] — 2026-07-23
 
 ### Fixed
