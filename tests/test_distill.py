@@ -292,6 +292,92 @@ def test_commands_sh_guide_only_omits_clone_preamble(tmp_path: Path) -> None:
     assert 'echo "R2D_VERIFY_OK"' in text
 
 
+def test_regression_non_idempotent_success_command_not_run_twice(tmp_path: Path) -> None:
+    """Regression (#222, deepsec-20260724-105709): a success command containing
+    a non-idempotent scaffolder (`X init`, which refuses a non-empty target)
+    was run as the last setup step AND re-run in the assertion; the second run
+    failed on the state the first created, so verify failed though the tool
+    worked. The duplicated setup step is dropped — the command runs exactly
+    once, in the assertion, against a clean state.
+    """
+    success = (
+        "pnpm deepsec init && cd .deepsec && pnpm install "
+        "&& pnpm deepsec scan && pnpm deepsec status"
+    )
+    out = DistillOutput(
+        commands=[
+            "npm install -g pnpm@8.15.9",
+            "pnpm install",
+            # setup's copy carries an `rm -rf .deepsec` guard + env/cwd prefix;
+            # its chain ends with the exact success command.
+            "cd /work && rm -rf .deepsec && " + success,
+            "cd /work",  # a bare cd trails the demo step
+        ],
+        tape=[],
+        outline=TutorialOutline(title="deepsec", intro=""),
+    )
+    plan = Plan(
+        quickstart_summary="scaffold and scan",
+        success_criteria=SuccessCriteria(command=success, expected_pattern=None),
+    )
+    write_artifacts(out, tmp_path, plan, "https://github.com/vercel-labs/deepsec.git")
+    text = (tmp_path / "commands.sh").read_text(encoding="utf-8")
+    # `pnpm deepsec init` now appears exactly once (in the assertion), not twice.
+    assert text.count("pnpm deepsec init") == 1
+    # The guarded setup step is gone; the trailing bare `cd /work` stays.
+    assert "rm -rf .deepsec" not in text
+    assert "cd /work" in text
+    # Grounding intact: the success command still runs in the assertion.
+    assert success in text
+    assert 'echo "R2D_VERIFY_OK"' in text
+
+
+def test_dedup_noop_when_success_command_absent_from_setup(tmp_path: Path) -> None:
+    """The dedup must not touch setup when no step ends with the success
+    command — every setup step survives (#222)."""
+    out = make_output(["pip install cowsay", "cowsay --version"])
+    plan = Plan(
+        quickstart_summary="install and greet",
+        success_criteria=SuccessCriteria(command="cowsay hello", expected_pattern=None),
+    )
+    write_artifacts(out, tmp_path, plan, "https://github.com/x/y.git")
+    text = (tmp_path / "commands.sh").read_text(encoding="utf-8")
+    assert "pip install cowsay" in text
+    assert "cowsay --version" in text
+    # Not in setup, so it appears once — in the assertion.
+    assert text.count("cowsay hello") == 1
+
+
+def test_dedup_runs_demo_command_once_when_it_is_last_setup_step(tmp_path: Path) -> None:
+    """When the success command IS the last setup step (the common shape), it
+    runs once — in the assertion — not twice (#222). Harmless for idempotent
+    commands, essential for non-idempotent ones."""
+    out = make_output(["pip install -r requirements.txt", "python examples/hello.py"])
+    plan = make_plan()  # success command: python examples/hello.py
+    write_artifacts(out, tmp_path, plan, "https://github.com/x/y.git")
+    text = (tmp_path / "commands.sh").read_text(encoding="utf-8")
+    assert text.count("python examples/hello.py") == 1
+    assert "pip install -r requirements.txt" in text  # real setup untouched
+
+
+def test_dedup_keeps_step_when_real_work_follows(tmp_path: Path) -> None:
+    """Safety: only a trailing bare-cd may follow the duplicated step; if real
+    work follows it, the step is kept (a later step might depend on it) (#222)."""
+    out = DistillOutput(
+        commands=["make build", "make build", "./use-the-build-output.sh"],
+        tape=[],
+        outline=TutorialOutline(title="t", intro=""),
+    )
+    plan = Plan(
+        quickstart_summary="build then use",
+        success_criteria=SuccessCriteria(command="make build", expected_pattern=None),
+    )
+    write_artifacts(out, tmp_path, plan, "https://github.com/x/y.git")
+    text = (tmp_path / "commands.sh").read_text(encoding="utf-8")
+    # Both setup `make build` steps kept (real work follows), + assertion = 3.
+    assert text.count("make build") == 3
+
+
 @pytest.mark.skipif(
     os.name == "nt",
     reason="commands.sh targets POSIX containers; NTFS has no executable bit",
