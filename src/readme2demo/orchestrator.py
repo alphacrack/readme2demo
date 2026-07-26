@@ -210,7 +210,9 @@ class Orchestrator:
             )
         if self.cfg.budget_usd and cost > self.cfg.budget_usd:
             raise PipelineError(
-                f"Agent cost ${cost:.2f} exceeded budget ${self.cfg.budget_usd:.2f}"
+                f"Agent cost ${cost:.2f} exceeded budget ${self.cfg.budget_usd:.2f}. "
+                "Raise budget_usd in readme2demo.toml (or --budget-usd on a fresh run), "
+                "then resume this run — the agent work is already saved."
             )
 
     def _stage_distill(self, feedback: str = "") -> None:
@@ -331,10 +333,18 @@ class Orchestrator:
             try:
                 handlers[stage]()
             except PipelineError as e:
-                self.manifest.stage_fail(stage, str(e))
+                # Spend already incurred before the raise (e.g. the distiller's
+                # paid grounding retry) rides on the exception — see #103.
+                self.manifest.stage_fail(
+                    stage, str(e), cost_usd=getattr(e, "cost_usd", 0.0)
+                )
                 raise
             except Exception as e:  # noqa: BLE001 — record, then re-raise
-                self.manifest.stage_fail(stage, f"{type(e).__name__}: {e}")
+                self.manifest.stage_fail(
+                    stage,
+                    f"{type(e).__name__}: {e}",
+                    cost_usd=getattr(e, "cost_usd", 0.0),
+                )
                 raise
 
             # --dry-run: the feasibility verdict and blockers are known once
