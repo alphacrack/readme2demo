@@ -95,7 +95,7 @@ readme2demo report runs/tool-20260702-...
 
 The repo is **optional**: pass it positionally or with `-gr/--github-repo`, supply a guide with `-s/--step-by-step`, or both. At least one is required. With a guide alone, no repo is cloned — the guide must be self-contained (install a published package, or clone what it needs as an explicit step); the fresh-container replay still verifies every command.
 
-Outputs land in `runs/<run-id>/`: `tutorial.md`, `step_by_step.md`, `troubleshooting.md`, `commands.sh`, `demo.tape`, `demo.mp4`, `demo.gif`, plus `manifest.json` with stage statuses and total cost.
+Outputs land in `runs/<run-id>/`: `tutorial.md`, `step_by_step.md`, `troubleshooting.md`, `commands.sh`, `demo.tape`, `demo.mp4`, `demo.gif`, `howto.jsonld`, plus `manifest.json` with stage statuses and total cost.
 
 ## GitHub Action — verify your README in CI
 
@@ -148,6 +148,7 @@ CLI flags > `readme2demo.toml` > defaults:
 ```toml
 engine = "claude-code"      # or "openhands"
 model = "claude-sonnet-5"   # planner/distiller/tutorial passes
+llm_backend = "auto"        # auto | api | claude-cli | gemini | openai
 max_turns = 60
 budget_usd = 5.0
 base_image = "readme2demo/base:latest"
@@ -157,7 +158,7 @@ skip_video = false
 ## Development
 
 ```bash
-python -m pytest tests/ -q            # 175 unit tests, no docker/network needed
+python -m pytest tests/ -q            # comprehensive unit test suite, no docker/network needed
 ruff check src/ tests/               # correctness lint (matches CI)
 python -m pytest -m integration      # requires docker + API keys (none yet)
 ```
