@@ -64,7 +64,7 @@ EOF
 ```
 
 `commands.sh` and `plan.json` can be patched by hand for one run; then
-`readme2demo resume runs/<run-id> --from-stage <verify|render|tutorial>`.
+`readme2demo resume runs/<run-id> --from-stage <verify|tutorial|render>`.
 Resume from the EARLIEST stage whose inputs changed, never earlier.
 
 ## After the diagnosis
