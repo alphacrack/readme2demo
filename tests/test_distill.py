@@ -836,6 +836,142 @@ def test_build_tape_from_step_by_step_coverage(tmp_path):
     assert "python examples/hello.py" in (tmp_path / "demo.tape").read_text()
 
 
+# -- step_timestamps.json (#172) -------------------------------------------------------
+
+
+def test_step_timestamps_total_matches_expected_min_duration(tmp_path):
+    """Drift-lock (#172): the per-step timing model must sum to the whole-tape
+    lower bound render.expected_min_duration_s computes from the RENDERED tape.
+    Both count the hidden-preamble typing, the `# comment` lines + 800ms,
+    per-line heredoc typing, the clamped sleeps, and the trailing 3s — so if the
+    two models ever diverge, one was changed without the other."""
+    from readme2demo.render import expected_min_duration_s
+
+    tape = [
+        TapeCommand(cmd="git clone https://github.com/x/y .", comment="Clone the repo", sleep_after_s=3.0),
+        TapeCommand(cmd="pip install -e .", comment="Install", sleep_after_s=3.0),
+        TapeCommand(cmd="python -m pytest -q", comment=None, sleep_after_s=3.0),
+        TapeCommand(
+            cmd="cat > demo.txt <<'EOF'\nhello\nworld\nEOF",
+            comment="Create a file",
+            lines=["cat > demo.txt <<'EOF'", "hello", "world", "EOF"],
+            sleep_after_s=1.0,
+        ),
+    ]
+    # Both preamble variants: the seed variant types a longer hidden line.
+    for seed in (False, True):
+        d = distill.step_timestamps(tape, seed_worktree=seed)
+        tape_text = distill.write_tape(tape, tmp_path, seed_worktree=seed).read_text()
+        assert d["total_min_s"] == pytest.approx(expected_min_duration_s(tape_text), abs=1e-3)
+    # the seed variant's longer preamble shifts every offset right
+    plain = distill.step_timestamps(tape, seed_worktree=False)
+    seeded = distill.step_timestamps(tape, seed_worktree=True)
+    assert seeded["preamble_min_s"] > plain["preamble_min_s"]
+    assert seeded["steps"][0]["start_min_s"] > plain["steps"][0]["start_min_s"]
+
+
+def test_step_timestamps_schema_and_lower_bound_honesty():
+    """Regression (#172): the schema carries the top-level and per-step fields
+    #114/chapter markers consume, and the note states offsets are lower bounds
+    (Waits excluded) with n_waits recorded for post-render correction."""
+    tape = [TapeCommand(cmd="python examples/hello.py", comment="Run it", sleep_after_s=3.0)]
+    d = distill.step_timestamps(tape, seed_worktree=False)
+    assert set(d) >= {"typing_speed_ms", "preamble_min_s", "final_sleep_s", "total_min_s", "steps"}
+    assert d["typing_speed_ms"] == distill.TAPE_TYPING_SPEED_MS
+    assert d["final_sleep_s"] == distill.TAPE_FINAL_SLEEP_S
+    step = d["steps"][0]
+    assert set(step) >= {"index", "title", "cmd", "start_min_s", "end_min_s", "n_waits"}
+    assert step["index"] == 0
+    assert step["n_waits"] == 1
+    assert "lower bound" in d["note"].lower()
+    assert "n_waits" in d["note"]
+
+
+def test_step_timestamps_applies_sleep_clamp():
+    """Regression (#172): the timeline must use the CLAMPED sleeps write_tape
+    renders (floor 2.0s), not the raw 1.0s (heredoc) / 3.0s (single) values the
+    TapeCommands carry — else every offset lands left of the real video. The
+    2.0 lives in one place, `clamp_sleep_s`, shared with write_tape."""
+    per_char = distill.TAPE_TYPING_SPEED_MS / 1000.0
+    tape = [
+        TapeCommand(cmd="a", sleep_after_s=1.0),   # raw 1.0 must clamp UP to 2.0
+        TapeCommand(cmd="bb", sleep_after_s=3.0),  # raw 3.0 stays 3.0 (above floor)
+    ]
+    d = distill.step_timestamps(tape, seed_worktree=False)
+    assert d["steps"][0]["start_min_s"] == round(len(distill.TAPE_PREAMBLE_PLAIN) * per_char, 3)
+    s0, s1 = d["steps"]
+    assert round(s0["end_min_s"] - s0["start_min_s"], 3) == round(1 * per_char + 2.0, 3)
+    assert round(s1["end_min_s"] - s1["start_min_s"], 3) == round(2 * per_char + 3.0, 3)
+    assert distill.clamp_sleep_s(1.0) == 2.0 and distill.clamp_sleep_s(3.0) == 3.0
+
+
+def test_step_timestamps_heredoc_step_counts_each_line():
+    """Regression (#172): a heredoc step types each of `lines` on camera, so its
+    span is the sum of every line's typing plus one Wait and the clamped sleep —
+    NOT the typing of the joined `cmd`."""
+    lines = ["cat > f <<'EOF'", "hi", "EOF"]
+    tape = [TapeCommand(cmd="\n".join(lines), lines=lines, sleep_after_s=1.0)]
+    d = distill.step_timestamps(tape, seed_worktree=False)
+    per_char = distill.TAPE_TYPING_SPEED_MS / 1000.0
+    step = d["steps"][0]
+    typing = sum(len(ln) for ln in lines) * per_char
+    assert round(step["end_min_s"] - step["start_min_s"], 3) == round(typing + 2.0, 3)
+    assert step["n_waits"] == 1
+    assert step["cmd"] == "cat > f <<'EOF'\nhi\nEOF"
+
+
+def test_step_timestamps_carries_title_across_continuation_steps():
+    """Regression (#172): consecutive commands under one heading share a title
+    and only the first carries `comment` (distill sets it only when the title
+    changes) — the timeline must carry the effective heading forward so chapter
+    grouping works, and a leading continuation yields an empty title not a
+    crash."""
+    tape = [
+        TapeCommand(cmd="make build", comment="Build and test", sleep_after_s=3.0),
+        TapeCommand(cmd="make test", comment=None, sleep_after_s=3.0),
+        TapeCommand(cmd="make lint", comment=None, sleep_after_s=3.0),
+    ]
+    titles = [s["title"] for s in distill.step_timestamps(tape, seed_worktree=False)["steps"]]
+    assert titles == ["Build and test", "Build and test", "Build and test"]
+    d = distill.step_timestamps([TapeCommand(cmd="x")], seed_worktree=False)
+    assert d["steps"][0]["title"] == ""
+
+
+def test_build_tape_from_step_by_step_writes_step_timestamps(tmp_path):
+    """Regression (#172): the render hook writes step_timestamps.json next to
+    tape_coverage.json, computed from the grounded guide-derived tape."""
+    (tmp_path / "step_by_step.md").write_text(
+        "# g\n\n### Step 1 — Run\n\n```bash\npython examples/hello.py\n```\n"
+    )
+    distill.build_tape_from_step_by_step(
+        tmp_path, make_log(), "https://github.com/x/y", fallback=[]
+    )
+    ts = json.loads((tmp_path / "step_timestamps.json").read_text())
+    assert [s["cmd"] for s in ts["steps"]] == ["python examples/hello.py"]
+    assert ts["steps"][0]["title"] == "Run"
+    # sidecar to the tape, both written from the same final_tape
+    assert (tmp_path / "tape_coverage.json").is_file()
+
+
+def test_build_tape_timestamps_describes_fallback_tape(tmp_path):
+    """Regression (#172): when NO guide step is grounded the video falls back to
+    the distiller's own tape — step_timestamps.json must describe THAT tape with
+    the SAME seed flag write_tape used, never steps absent from the video."""
+    (tmp_path / "step_by_step.md").write_text(
+        "# g\n\n### Step 1 — Never ran\n\n```bash\n./bin/never-ran --demo\n```\n"
+    )
+    fallback = [TapeCommand(cmd="python examples/hello.py", comment="Fallback demo", sleep_after_s=3.0)]
+    cov = distill.build_tape_from_step_by_step(
+        tmp_path, make_log(), "https://github.com/x/y", fallback=fallback
+    )
+    assert cov["tape_steps"] == 0  # nothing grounded from the guide
+    ts = json.loads((tmp_path / "step_timestamps.json").read_text())
+    assert [s["cmd"] for s in ts["steps"]] == ["python examples/hello.py"]
+    # the fallback tape neither clones nor fetches → seeded (longer) preamble
+    per_char = distill.TAPE_TYPING_SPEED_MS / 1000.0
+    assert ts["preamble_min_s"] == round(len(distill.TAPE_PREAMBLE_SEED) * per_char, 3)
+
+
 # -- heredoc support (tfdrift regression) ----------------------------------------------
 
 
