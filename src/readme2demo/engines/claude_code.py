@@ -179,6 +179,13 @@ class ClaudeCodeEngine(AgentEngine):
     def required_env(self) -> list[str]:
         return ["ANTHROPIC_API_KEY"]  # canonical; see resolve_env for the OR
 
+    def credential_env_vars(self) -> set[str]:
+        # REQUIRED override, not cosmetic: required_env() names only
+        # ANTHROPIC_API_KEY, so the fail-closed default would miss
+        # CLAUDE_CODE_OAUTH_TOKEN — yet resolve_env forwards whichever of the
+        # two is set.
+        return set(self.AUTH_ENV_VARS)
+
     def resolve_env(self) -> dict[str, str]:
         """Forward whichever auth var is set (API key preferred).
 
