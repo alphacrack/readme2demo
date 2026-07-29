@@ -19,6 +19,51 @@ from readme2demo.types import CommandLog
 PROMPT_CONTAINER_PATH = "/task/prompt.md"
 TRANSCRIPT_CONTAINER_PATH = "/work/.r2d/transcript.ndjson"
 
+# Placeholder credentials (#234). One shared definition of what a stand-in
+# credential looks like, so the key-injecting proxy, the env-swap plumbing and
+# the credential canary all agree instead of each hand-rolling one. The prefix
+# mirrors the real public shape per var (some in-sandbox CLIs consume the
+# placeholder directly, so a missing ``sk-ant-`` prefix could fail the run
+# with a cryptic auth error); the body is all-``x`` — base64url-safe,
+# obviously non-secret, and greppable.
+_PLACEHOLDER_PREFIXES = {
+    "ANTHROPIC_API_KEY": "sk-ant-api03-",
+    "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-",
+}
+_PLACEHOLDER_GENERIC_PREFIX = "r2d-placeholder-"
+_PLACEHOLDER_BODY = "x" * 32
+
+
+def placeholder_credential(var: str) -> str:
+    """Fixed deterministic placeholder for the credential env var ``var``.
+
+    Pure: no env access, no I/O. The result passes the repo's one format gate
+    (``_CREDENTIAL_RE`` in ``engines/claude_code.py``) and mirrors the real
+    public shape of the credential (``sk-ant-api03-...`` for an API key,
+    ``sk-ant-oat01-...`` for an OAuth token).
+
+    An unknown/unsupported var name returns a GENERIC all-``x`` placeholder
+    that still passes the format gate — it does NOT raise. The consumers
+    operate over whatever credential vars an engine declares, and a total
+    function keeps substitution safe-by-default: an unrecognised var becomes
+    a safe placeholder, not a crash.
+    """
+    prefix = _PLACEHOLDER_PREFIXES.get(var, _PLACEHOLDER_GENERIC_PREFIX)
+    return prefix + _PLACEHOLDER_BODY
+
+
+def is_placeholder_credential(value: str) -> bool:
+    """True iff ``value`` is a placeholder produced by :func:`placeholder_credential`.
+
+    The matched inverse of the generator: ``False`` for a real-shaped key
+    (``sk-ant-test-...`` fixtures included) and for arbitrary strings.
+    """
+    for prefix in (*_PLACEHOLDER_PREFIXES.values(), _PLACEHOLDER_GENERIC_PREFIX):
+        if value.startswith(prefix):
+            body = value[len(prefix):]
+            return bool(body) and set(body) == {"x"}
+    return False
+
 
 @dataclass
 class Limits:
