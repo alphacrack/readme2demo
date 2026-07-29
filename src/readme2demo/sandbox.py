@@ -112,6 +112,7 @@ class Sandbox:
         cmd = [
             "docker", "run", "-d",
             "--name", self.name,
+            "--label", "readme2demo=1",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--memory", self.memory,
