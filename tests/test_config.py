@@ -41,6 +41,10 @@ class TestDefaults:
         assert cfg.formats == ["demo", "gif"]
         assert cfg.step_by_step is None
         assert cfg.runs_dir == Path("runs")
+        # brand kit: all optional, with a documented hex accent default
+        assert cfg.brand_logo is None
+        assert cfg.brand_color == "#7C6BF2"
+        assert cfg.brand_font is None
 
     def test_implicit_toml_in_cwd_is_picked_up(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -150,6 +154,117 @@ class TestUnknownKeys:
         monkeypatch.chdir(tmp_path)
         with pytest.raises(ValidationError, match="totally_unknown"):
             Config.load(totally_unknown="x")
+
+
+# --- brand kit (#173) ----------------------------------------------------------
+
+
+class TestBrandColor:
+    def test_default_brand_color_passes_its_own_validator(self) -> None:
+        """Regression (#173): the documented brand_color default must itself
+        satisfy the hex-color validator, or every command would fail at load."""
+        assert Config().brand_color == "#7C6BF2"
+
+    @pytest.mark.parametrize("value", ["#7C6BF2", "#000000", "#ffffff", "#AbCdEf"])
+    def test_valid_hex_accepted(self, value: str) -> None:
+        """Regression (#173): canonical #RRGGBB (any case) is accepted."""
+        assert Config(brand_color=value).brand_color == value
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "red",  # named color, no '#'
+            "7C6BF2",  # missing leading '#'
+            "#12345",  # only five digits
+            "#1234567",  # seven digits
+            "#GGGGGG",  # non-hex digits
+            "#7c6bf",  # short by one
+            "",  # empty
+        ],
+    )
+    def test_invalid_hex_rejected(self, value: str) -> None:
+        """Regression (#173): non-#RRGGBB strings fail fast at Config build."""
+        with pytest.raises(ValidationError, match="brand_color"):
+            Config(brand_color=value)
+
+    def test_short_rgb_form_is_rejected(self) -> None:
+        """Regression (#173): #RGB is deliberately NOT accepted — ffmpeg's
+        color parser wants #RRGGBB, so we reject the short form on the host
+        instead of deferring the failure into the render container."""
+        with pytest.raises(ValidationError, match="brand_color"):
+            Config(brand_color="#abc")
+
+
+class TestBrandLogo:
+    def test_missing_file_rejected(self, tmp_path: Path) -> None:
+        """Regression (#173): a set-but-nonexistent brand_logo fails fast at
+        Config.load, not later inside someone's render container."""
+        missing = tmp_path / "nope.png"
+        with pytest.raises(ValidationError, match="not found"):
+            Config(brand_logo=missing)
+
+    def test_svg_rejected_as_non_raster(self, tmp_path: Path) -> None:
+        """Regression (#173): .svg (and any non-raster suffix) is rejected
+        because typical ffmpeg builds cannot rasterize vector formats."""
+        svg = tmp_path / "logo.svg"
+        svg.write_text("<svg/>", encoding="utf-8")
+        with pytest.raises(ValidationError, match="raster"):
+            Config(brand_logo=svg)
+
+    @pytest.mark.parametrize("suffix", [".png", ".jpg", ".jpeg", ".JPG", ".PNG"])
+    def test_raster_suffixes_accepted(self, tmp_path: Path, suffix: str) -> None:
+        """Regression (#173): existing .png/.jpg/.jpeg files (case-insensitive)
+        are accepted and coerced to Path."""
+        logo = tmp_path / f"logo{suffix}"
+        logo.write_bytes(b"\x89PNG\r\n")
+        cfg = Config(brand_logo=str(logo))
+        assert cfg.brand_logo == logo
+        assert isinstance(cfg.brand_logo, Path)
+
+    def test_unset_is_fine(self) -> None:
+        assert Config().brand_logo is None
+
+
+class TestBrandFont:
+    def test_valid_name_accepted(self) -> None:
+        assert Config(brand_font="DejaVu Sans").brand_font == "DejaVu Sans"
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_empty_or_whitespace_rejected(self, value: str) -> None:
+        """Regression (#173): brand_font, if present, must be a real name;
+        emptiness is the only thing the host can meaningfully check (font
+        availability resolves where ffmpeg runs)."""
+        with pytest.raises(ValidationError, match="brand_font"):
+            Config(brand_font=value)
+
+    def test_unset_is_fine(self) -> None:
+        assert Config().brand_font is None
+
+
+class TestBrandKitFromToml:
+    def test_all_three_fields_load_from_toml(self, tmp_path: Path) -> None:
+        """Regression (#173): brand_logo/brand_color/brand_font all round-trip
+        through Config.load from readme2demo.toml (str -> Path coercion for the
+        logo, like step_by_step)."""
+        logo = tmp_path / "brand.png"
+        logo.write_bytes(b"\x89PNG\r\n")
+        toml = _write_toml(
+            tmp_path / "r2d.toml",
+            f'brand_logo = "{logo}"\n'
+            'brand_color = "#123456"\n'
+            'brand_font = "Inter"\n',
+        )
+        cfg = Config.load(toml)
+        assert cfg.brand_logo == logo
+        assert cfg.brand_color == "#123456"
+        assert cfg.brand_font == "Inter"
+
+    def test_bad_brand_color_in_toml_raises_at_load(self, tmp_path: Path) -> None:
+        """Regression (#173): validators fire during Config.load, so a broken
+        brand_color in the toml is caught before any agent cost is incurred."""
+        toml = _write_toml(tmp_path / "r2d.toml", 'brand_color = "purple"\n')
+        with pytest.raises(ValidationError, match="brand_color"):
+            Config.load(toml)
 
 
 # --- formats registry (surface-only #192) -------------------------------------

@@ -299,7 +299,9 @@ def test_run_rejects_missing_config_file_before_preflight(tmp_path):
     result = runner.invoke(app, ["run", _URL, "--config", str(missing)])
 
     assert result.exit_code != 0
-    assert "does not exist" in result.output
+    # Rich may soft-wrap long absolute paths; compare normalized output.
+    normalized = result.output.replace("│", " ")
+    assert "does not exist" in " ".join(normalized.split())
 
 
 def test_run_reports_unknown_config_key_without_traceback(tmp_path):
@@ -331,11 +333,19 @@ def test_version_flag():
     assert result.output.strip() != ""
 
 
+def test_run_output_dir_has_short_alias():
+    cmd = typer.main.get_command(app)
+    opts = {o for p in cmd.commands["run"].params for o in p.opts + p.secondary_opts}
+    assert "-o" in opts and "--output-dir" in opts
+
+
 def test_resume_rejects_missing_run_dir(tmp_path):
     missing = tmp_path / "missing-run"
     result = runner.invoke(app, ["resume", str(missing)])
     assert result.exit_code != 0
-    assert "does not exist" in result.output
+    # Rich may soft-wrap long absolute paths; compare normalized output.
+    normalized = result.output.replace("│", " ")
+    assert "does not exist" in " ".join(normalized.split())
 
 
 def test_resume_rejects_file_run_dir(tmp_path):
@@ -373,6 +383,57 @@ def test_regression_missing_openai_sdk_fails_preflight(monkeypatch, capsys):
     finally:
         llm.set_backend("auto")  # _preflight sets module state; reset it
     assert "readme2demo[openai]" in capsys.readouterr().out
+
+
+def test_regression_dry_run_preflight_skips_engine_auth_and_docker(monkeypatch, capsys):
+    """Regression (#220): --dry-run stops after ingest/planning, so preflight
+    must not demand the agent credential, the sandbox image, or the Docker CLI
+    it never uses. With no engine credential and no docker on PATH, a dry-run
+    preflight must pass; the whole point of --dry-run is a cheap feasibility
+    check before committing a key and a Docker environment.
+    """
+    import shutil as shutil_mod
+
+    from readme2demo import cli as cli_mod
+    from readme2demo import llm
+    from readme2demo.config import Config
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    # claude CLI present (planner backend resolves), docker absent. Note
+    # readme2demo.llm.shutil and cli's shutil are the same module object, so a
+    # single selective which() serves both lookups.
+    monkeypatch.setattr(
+        shutil_mod, "which", lambda name: "/usr/bin/claude" if name == "claude" else None
+    )
+    try:
+        cli_mod._preflight(Config(dry_run=True))  # must NOT raise
+    finally:
+        llm.set_backend("auto")
+    out = capsys.readouterr().out
+    assert "ANTHROPIC_API_KEY" not in out
+    assert "docker CLI not found" not in out
+
+
+def test_non_dry_run_still_requires_engine_credential(monkeypatch, capsys):
+    """The dry-run skip must not weaken a real run: without the credential a
+    non-dry-run preflight still fails (#220)."""
+    import shutil as shutil_mod
+
+    from readme2demo import cli as cli_mod
+    from readme2demo import llm
+    from readme2demo.config import Config
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr("readme2demo.llm.shutil.which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    try:
+        with pytest.raises(typer.Exit):
+            cli_mod._preflight(Config(dry_run=False))
+    finally:
+        llm.set_backend("auto")
+    assert "ANTHROPIC_API_KEY" in capsys.readouterr().out
 
 
 def test_preflight_rejects_unknown_backend_cleanly(monkeypatch, capsys):
@@ -652,6 +713,95 @@ def test_report_json_and_markdown_are_mutually_exclusive(tmp_path):
     # A usage error, not silent precedence: neither format was emitted.
     assert "Verified" not in result.output
     assert '"stages"' not in result.output
+
+
+def test_invalid_config_type_names_key_and_value(tmp_path):
+    """Regression: type errors must name the offending key and value."""
+    config_file = tmp_path / "readme2demo.toml"
+    config_file.write_text('max_turns = "sixty"\n', encoding="utf-8")
+
+    result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
+
+    assert result.exit_code == 2
+    assert "max_turns" in result.output
+    assert "sixty" in result.output
+
+
+def test_unknown_config_key_suggests_nearest_match(tmp_path):
+    """Regression: unknown keys should suggest a nearest valid key name."""
+    config_file = tmp_path / "readme2demo.toml"
+    config_file.write_text("max_turn = 99\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
+
+    assert result.exit_code == 2
+    assert "Unknown config key 'max_turn'" in result.output
+    assert "max_turns" in result.output  # nearest match / valid key
+
+
+def test_config_type_error_value_with_brackets_is_escaped(tmp_path):
+    """Regression: bracketed config *values* must survive escape(repr(...)).
+
+    Failure class 15: escape(repr(x)) is the safe order. This pins the new
+    value_bit path, not the unknown-key path already covered above.
+    """
+    config_file = tmp_path / "readme2demo.toml"
+    # max_turns expects int; a bracketed string hits the type-error branch.
+    config_file.write_text('max_turns = "[bold]sixty[/bold]"\n', encoding="utf-8")
+
+    result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
+
+    assert result.exit_code == 2
+    assert "max_turns" in result.output
+    # Literal brackets from the value must appear (not be swallowed by Rich).
+    assert "[bold]sixty[/bold]" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_pipeline_error_prints_resume_hint(tmp_path, monkeypatch):
+    """Regression: PipelineError path must print an explicit resume command."""
+    from readme2demo.orchestrator import Orchestrator, PipelineError
+    from readme2demo.manifest import Manifest
+
+    run_dir = tmp_path / "r1"
+    Manifest.create(run_dir, _URL, "claude-code", "img").save()
+
+    def boom(self):
+        raise PipelineError("synthetic stop for resume-hint test")
+
+    monkeypatch.setattr(Orchestrator, "run", boom)
+    monkeypatch.setattr("readme2demo.cli._preflight", lambda cfg: None)
+
+    result = runner.invoke(app, ["resume", str(run_dir)])
+    assert result.exit_code == 1
+    assert "Pipeline stopped" in result.output
+    assert "readme2demo resume" in result.output
+    # Rich may soft-wrap long absolute paths; compare collapsed whitespace.
+    collapsed = " ".join(result.output.split())
+    assert str(run_dir) in collapsed or run_dir.name in result.output
+
+
+def test_unverified_completion_prints_from_stage_distill(tmp_path, monkeypatch):
+    """Regression: UNVERIFIED completion must suggest resume --from-stage distill."""
+    from readme2demo.orchestrator import Orchestrator
+    from readme2demo.manifest import Manifest
+
+    run_dir = tmp_path / "r2"
+    m = Manifest.create(run_dir, _URL, "claude-code", "img")
+    m.verified = False
+    m.save()
+
+    def fake_run(self):
+        return self.manifest
+
+    monkeypatch.setattr(Orchestrator, "run", fake_run)
+    monkeypatch.setattr("readme2demo.cli._preflight", lambda cfg: None)
+
+    result = runner.invoke(app, ["resume", str(run_dir)])
+    # Rich may soft-wrap long absolute paths; compare collapsed whitespace.
+    collapsed = " ".join(result.output.split())
+    assert "--from-stage distill" in collapsed
+    assert "UNVERIFIED" in collapsed or "unverified" in collapsed.lower()
 
 
 # -- formats registry surface (#192) ------------------------------------------
