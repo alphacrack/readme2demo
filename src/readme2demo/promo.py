@@ -25,16 +25,23 @@ Grounding (the one non-negotiable invariant), enforced structurally:
   audited by :func:`assert_only_demo_footage` before it is returned: the input
   list may contain exactly one video (``/vhs/demo.mp4``), synthetic solid-color
   ``lavfi`` card backgrounds, and — when configured — the validated raster
-  brand logo. Any other ``-i``, and any bind mount other than the run dir (plus
-  the logo file, read-only), raises :class:`PromoError` — as does any output
-  path other than ``/vhs/promo.mp4``. The container also runs with
+  brand logo, forced to a single still frame. Any other ``-i``, any filtergraph
+  that names a source of its own (``movie=``/``amovie=``/a graph read from a
+  file), any bind mount other than the run dir (plus the logo file, read-only)
+  in ANY of docker's mount spellings, and any path under the run-dir mount that
+  is written other than ``/vhs/promo.mp4`` raises :class:`PromoError`. The audit
+  also *checks* — rather than assumes — that the container runs
   ``--network none``, so ffmpeg cannot fetch a remote source even if a future
   edit tried. A promo that could splice in foreign footage would defeat the
   whole "we replay what your repo provably did" claim.
 * **Every ``[start_s, end_s]`` is bounds-checked** against the real duration of
   ``demo.mp4``, measured with ffprobe (host, else inside the container). A
   segment past the end of the video is a grounding violation, not something to
-  clamp and continue; an unmeasurable duration means no promo at all.
+  clamp and continue; an unmeasurable duration means no promo at all. Every
+  float that reaches a comparison is required to be *finite* first
+  (:func:`_finite`): ``NaN`` compares False against every ``<``/``>``/``<=``, so
+  an un-checked ``NaN`` would slide through the bounds check AND turn the
+  duration gate into a no-op.
 * **At least one ``demo_segment``** per script, or the cut is refused.
 * **Card and caption text is passed through verbatim** from the script. Every
   string that reaches the filtergraph goes through ``brand.title_card_drawtext``
@@ -45,15 +52,30 @@ Grounding (the one non-negotiable invariant), enforced structurally:
 Nothing here touches the four protected artifacts (``tutorial.md``,
 ``step_by_step.md``, ``commands.sh``, ``demo.tape``) or ``demo.mp4`` itself.
 
-Deliberately NOT here: the verified-run gate (a run whose replay did not pass
-gets no promo, mirroring the render stage's ``manifest.verified`` skip) belongs
-where the script is generated (#169) and where the pipeline wires this module in
-(#230). The promo is an optional post-render output, not a stage in
-``manifest.STAGES``.
+**Trust boundary — read this before calling** :func:`render_promo`: this module
+does NOT check ``manifest.verified``. It trusts its caller to have established
+that the run's replay passed, exactly as it trusts the caller to hand it a
+``demo.mp4`` that came from the render stage. What it enforces on its own is
+narrower and mechanical: the footage in the promo is bit-for-bit a span of the
+``demo.mp4`` sitting in the run dir. Deliberately NOT here: the verified-run
+gate (a run whose replay did not pass gets no promo, mirroring the render
+stage's ``manifest.verified`` skip) belongs where the script is generated (#169)
+and where the pipeline wires this module in (#230). The promo is an optional
+post-render output, not a stage in ``manifest.STAGES``.
+
+``PromoScene.step_index`` is carried and deliberately never read here. It is
+provenance for the script generator (#169) and the wiring stage (#230) — "which
+guide step this cut came from" — while the grounding in this module is the
+measured ``[start_s, end_s]`` span checked against ``demo.mp4``'s real ffprobe
+duration. Trusting a step index instead would be a second, weaker notion of
+where footage comes from: an index can be right while the span is wrong, and it
+is the span that ffmpeg actually cuts.
 """
 
 from __future__ import annotations
 
+import math
+import posixpath
 import re
 import shutil
 import subprocess
@@ -84,6 +106,7 @@ except ImportError:  # pragma: no cover - dropped when #169 lands
 
         kind: Literal["title_card", "demo_segment", "end_card"]
         text: Optional[str] = None
+        # Provenance only — never read by this module; see the module docstring.
         step_index: Optional[int] = None
         start_s: Optional[float] = None
         end_s: Optional[float] = None
@@ -150,6 +173,50 @@ _LAVFI_COLOR_RE = re.compile(r"^color=c=(?:#|0x)?[0-9A-Za-z@.]+:s=\d+x\d+:r=\d+$
 #: Raster suffixes the logo overlay may use (mirrors ``config._BRAND_LOGO_SUFFIXES``;
 #: re-checked here because a ``Config.model_construct`` bypasses the validator).
 _RASTER_SUFFIXES = (".png", ".jpg", ".jpeg")
+
+#: Demuxer forced onto the brand-logo input. The suffix check is an EXTENSION
+#: check and ffmpeg decodes by CONTENT, so an mp4 named ``logo.png`` would
+#: otherwise animate over every card. ``-f image2`` pins the still-image
+#: demuxer, and ``build_filtergraph`` additionally trims the logo stream to its
+#: first frame — content cannot animate through either door.
+_LOGO_INPUT_FORMAT = "image2"
+
+#: Filtergraph half of the same guarantee: whatever the logo input decodes to,
+#: only its first frame reaches the overlay.
+LOGO_STILL_FILTERS = "trim=end_frame=1,setpts=PTS-STARTPTS"
+
+#: Docker's bind-mount spellings. ``-v``/``--volume`` take one ``host:container``
+#: spec and are the only form the builder emits, so they are the only form the
+#: audit can check against an allow-list. ``--mount``'s CSV and
+#: ``--volumes-from``'s inherited mount set cannot be audited from the argv
+#: alone (``--mount type=bind,source=/anywhere/stock.mp4,target=/vhs/demo.mp4``
+#: would SHADOW the run's own footage with a foreign file while every ``-i``
+#: still read ``/vhs/demo.mp4``), so they are refused outright rather than
+#: parsed. Any other mount-ish flag fails closed via :func:`_looks_like_mount_flag`.
+_BIND_FLAGS = frozenset({"-v", "--volume"})
+_UNAUDITABLE_MOUNT_FLAGS = frozenset({"--mount", "--volumes-from"})
+
+#: Docker network flag spellings; the audit requires the value to be ``none``.
+_NETWORK_FLAGS = frozenset({"--network", "--net"})
+
+#: ffmpeg flags whose value IS a filtergraph (audited by :func:`_assert_graph_grounded`).
+_GRAPH_VALUE_FLAGS = frozenset(
+    {"-filter_complex", "-lavfi", "-vf", "-af", "-filter", "-filter:v", "-filter:a"}
+)
+
+#: A filtergraph may not name a source of its own. ``movie=``/``amovie=`` open a
+#: file that the ``-i`` audit never sees. Anchored to the positions where
+#: ffmpeg actually recognises a filter name — start of graph, or after
+#: ``;``/``,``/``]`` — which is both sufficient (nowhere else is a filter name)
+#: and free of false positives: caption text reaches the graph through
+#: ``brand.escape_drawtext``, which escapes exactly those separators.
+#: The optional ``@id`` is NOT decoration: ffmpeg's grammar is
+#: ``name[@id]=args``, and ``movie@1=/x.mp4[bg]`` decodes exactly like
+#: ``movie=`` — verified against ffmpeg 8.1.2 — so a check anchored on ``movie=``
+#: alone is one character away from being no check at all. The id is matched as
+#: "anything up to the ``=``" rather than a guessed charset: over-refusing at a
+#: filter-name position costs a promo, under-refusing costs the guarantee.
+_GRAPH_SOURCE_RE = re.compile(r"(?:^|(?<![\\])[;,\]])\s*a?movie\s*(?:@[^=]*)?\s*=")
 
 
 class PromoError(RuntimeError):
@@ -256,19 +323,51 @@ def _f(value: float) -> str:
     return f"{value:.3f}"
 
 
+def _finite(value: float, what: str) -> float:
+    """Return ``value`` as a float, or raise if it is not finite.
+
+    THE guard in front of every numeric gate in this module. ``NaN`` compares
+    ``False`` against ``<``, ``>`` and ``<=`` alike, so a single ``NaN`` in a
+    script silently walks through the segment bounds check, poisons the
+    predicted duration, and turns :func:`validate_promo`'s
+    ``abs(duration - expected_s) > slack`` into a gate that accepts any length.
+    ``inf`` is refused for the same reason. JSON has no ``NaN`` literal, but
+    every parser in reach (``json``, pydantic) accepts the bare token, so this
+    is data-reachable, not theoretical.
+
+    Raises:
+        PromoError: if ``value`` is not a finite number.
+    """
+    try:
+        as_float = float(value)
+    except (TypeError, ValueError):
+        raise PromoError(f"{what} must be a number (got {value!r})") from None
+    if not math.isfinite(as_float):
+        raise PromoError(
+            f"{what} must be a finite number (got {value!r}) — NaN/inf compares "
+            "False against every bounds and duration check, so it is refused "
+            "rather than silently disabling them"
+        )
+    return as_float
+
+
 def _span(scene: PromoScene) -> tuple[float, float]:
     """``(start_s, end_s)`` of a demo segment.
 
     Raises:
         PromoError: if either bound is missing — an unbounded segment is not a
-            cut of the real video, it is a request to trust the script.
+            cut of the real video, it is a request to trust the script — or if
+            either bound is not finite (see :func:`_finite`).
     """
     if scene.start_s is None or scene.end_s is None:
         raise PromoError(
             "demo_segment scene is missing start_s/end_s — every cut must name "
             "an explicit span of demo.mp4"
         )
-    return float(scene.start_s), float(scene.end_s)
+    return (
+        _finite(scene.start_s, "demo_segment start_s"),
+        _finite(scene.end_s, "demo_segment end_s"),
+    )
 
 
 def validate_script(script: PromoScript, *, source_duration_s: float) -> None:
@@ -277,6 +376,8 @@ def validate_script(script: PromoScript, *, source_duration_s: float) -> None:
     Checks, all of them hard errors (this module never clamps a bad value into
     a plausible one):
 
+    * every float is finite — ``NaN``/``inf`` are refused BEFORE any comparison,
+      because they pass all of them (see :func:`_finite`),
     * at least one ``demo_segment`` scene — a promo with no real footage is not
       a promo of this run (the epic's "enforced, not suggested"),
     * positive ``duration_s`` on every scene and a positive
@@ -288,6 +389,7 @@ def validate_script(script: PromoScript, *, source_duration_s: float) -> None:
     Raises:
         PromoError: on the first violation, naming the scene index.
     """
+    source_duration_s = _finite(source_duration_s, f"{render.PRIMARY_ARTIFACT} duration")
     if source_duration_s <= 0:
         raise PromoError(
             f"demo.mp4 duration {source_duration_s!r} is not usable — refusing to "
@@ -295,14 +397,14 @@ def validate_script(script: PromoScript, *, source_duration_s: float) -> None:
         )
     if not script.scenes:
         raise PromoError("promo script has no scenes")
-    if script.total_duration_s <= 0:
+    if _finite(script.total_duration_s, "promo script total_duration_s") <= 0:
         raise PromoError(
             f"promo script total_duration_s must be > 0 (got {script.total_duration_s})"
         )
 
     segments = 0
     for i, scene in enumerate(script.scenes):
-        if scene.duration_s <= 0:
+        if _finite(scene.duration_s, f"scene {i} ({scene.kind}): duration_s") <= 0:
             raise PromoError(f"scene {i} ({scene.kind}): duration_s must be > 0")
         if scene.kind == "demo_segment":
             segments += 1
@@ -340,17 +442,22 @@ def segment_pace(
     pace rises to fit — capped by the preset's ``max_pace`` so the footage stays
     legible. Spans themselves are never trimmed: the promo shows the exact
     ``[start_s, end_s]`` the script asked for, just faster.
+
+    Raises:
+        PromoError: on an unknown preset or a non-finite duration/span. This is
+            a public entry point, so it re-checks finiteness rather than
+            assuming :func:`validate_script` ran first.
     """
     st = style_preset(style)
     dp = duration_preset(preset)
     natural = 0.0
     cards = 0.0
-    for scene in script.scenes:
+    for i, scene in enumerate(script.scenes):
         if scene.kind == "demo_segment":
             start, end = _span(scene)
             natural += end - start
         else:
-            cards += scene.duration_s
+            cards += _finite(scene.duration_s, f"scene {i} ({scene.kind}): duration_s")
     budget = max(dp.target_s - cards, MIN_SEGMENT_BUDGET_S)
     return round(min(max(st.pace, natural / budget), dp.max_pace), 3)
 
@@ -371,12 +478,14 @@ def _timeline(script: PromoScript, *, style: str, preset: int) -> _Timeline:
     pace = segment_pace(script, style=style, preset=preset)
 
     durations: list[float] = []
-    for scene in script.scenes:
+    for i, scene in enumerate(script.scenes):
         if scene.kind == "demo_segment":
             start, end = _span(scene)
             durations.append(round((end - start) / pace, 3))
         else:
-            durations.append(round(float(scene.duration_s), 3))
+            durations.append(
+                round(_finite(scene.duration_s, f"scene {i} ({scene.kind}): duration_s"), 3)
+            )
 
     fades: list[tuple[float, float]] = []
     acc = durations[0]
@@ -519,9 +628,16 @@ def build_filtergraph(
         + "".join(f"[seg{j}]" for j in range(n_segments))
     )
     if plan.logo_index is not None:
+        # The logo is trimmed to its FIRST FRAME before it is split. config.py
+        # validates the logo by file EXTENSION and ffmpeg decodes by CONTENT, so
+        # an mp4 named ``logo.png`` would otherwise play foreign moving frames
+        # over every card. One frame is all an overlay needs (overlay's default
+        # eof_action=repeat holds it for the whole card), so this costs nothing
+        # for a real logo and structurally cannot animate for a fake one. The
+        # ``-f image2`` on the input side (build_promo_argv) is the second door.
         n_cards = len(plan.card_ordinal)
         parts.append(
-            f"[{plan.logo_index}:v]split={n_cards}"
+            f"[{plan.logo_index}:v]{LOGO_STILL_FILTERS},split={n_cards}"
             + "".join(f"[lg{c}]" for c in range(n_cards))
         )
 
@@ -567,29 +683,106 @@ def build_filtergraph(
     return ";".join(parts)
 
 
+def _flag_name(token: str) -> str:
+    """The flag part of a token, so ``--volume=/a:/b`` audits as ``--volume``."""
+    return token.split("=", 1)[0]
+
+
+def _flag_value(argv: list[str], i: int) -> tuple[Optional[str], Optional[int]]:
+    """``(value, value_index)`` of the flag at ``argv[i]``.
+
+    Handles both spellings docker accepts — ``--volume /a:/b`` and
+    ``--volume=/a:/b`` — because an audit that understands only one of them
+    audits only half the command lines that can be built. ``value_index`` is
+    ``None`` for the ``=``-joined form (the value has no token of its own).
+    """
+    if "=" in argv[i]:
+        return argv[i].split("=", 1)[1], None
+    if i + 1 < len(argv):
+        return argv[i + 1], i + 1
+    return None, None
+
+
+def _looks_like_mount_flag(name: str) -> bool:
+    """True for any flag that smells like it makes a host path visible.
+
+    Deliberately broader than :data:`_BIND_FLAGS` + :data:`_UNAUDITABLE_MOUNT_FLAGS`
+    so an unrecognised spelling FAILS CLOSED. Docker's mount surface grows; an
+    audit that only knows ``-v`` is a comment, not a check.
+    """
+    bare = name.lstrip("-").lower()
+    return bare in {"v", "volume", "volumes-from", "mount"} or "mount" in bare or "volume" in bare
+
+
+def _under_run_mount(token: str) -> Optional[str]:
+    """Normalised path if ``token`` names a location inside the run-dir mount."""
+    path = token[5:] if token.startswith("file:") else token
+    if not path.startswith("/"):
+        return None
+    norm = posixpath.normpath(path)
+    if norm == CONTAINER_RUN_DIR or norm.startswith(CONTAINER_RUN_DIR + "/"):
+        return norm
+    return None
+
+
+def _assert_graph_grounded(flag: str, graph: str) -> None:
+    """Refuse a filtergraph that opens a source of its own.
+
+    ``-i`` is not the only way into ffmpeg: ``movie=``/``amovie=`` decode a file
+    named INSIDE the graph, which the input audit never sees. Not reachable from
+    script text today (``brand.escape_drawtext`` escapes every separator a
+    caption would need to break out of ``drawtext=text=``), which is exactly why
+    it is worth pinning: this function is defence in depth against the future
+    edit, not against today's data.
+    """
+    if _GRAPH_SOURCE_RE.search(graph):
+        raise PromoError(
+            f"promo refuses a filtergraph source in {flag}: movie=/amovie= decodes a "
+            "file the input audit never sees, so the only footage source stays the "
+            f"run's own {render.PRIMARY_ARTIFACT}"
+        )
+
+
 def assert_only_demo_footage(argv: list[str], run_dir: Path, cfg: Config) -> None:
     """Refuse any argv that could pull in footage other than the run's demo.mp4.
 
     THE structural guarantee of this module, applied to the finished command
-    line rather than trusted to a comment: walk the argv and require that
+    line rather than trusted to a comment. One left-to-right walk, then three
+    aggregate checks; every rule below is a way frames that the run did not
+    produce could otherwise reach ``promo.mp4``:
 
-    * exactly one ``-i`` names ``/vhs/demo.mp4`` (the run's own render),
+    * exactly one ``-i`` names ``/vhs/demo.mp4`` (the run's own render), with no
+      forced demuxer — ``-f concat -i /vhs/demo.mp4`` would read the artifact of
+      record as a PLAYLIST of arbitrary files,
     * every other ``-i`` is either a synthetic solid-colour ``lavfi`` source
       (``-f lavfi -i color=…``) or the configured raster brand logo at its
-      read-only mount point,
-    * the only bind mounts are the run directory and that logo file,
-    * the output is ``/vhs/promo.mp4`` — the compositor writes its own artifact
-      and can never overwrite ``demo.mp4``, the artifact of record.
+      read-only mount, forced to the still-image demuxer,
+    * no filtergraph names a source of its own (``movie=``/``amovie=``), and a
+      graph read from a FILE (``-filter_complex_script``) is refused outright
+      because the audit cannot see it,
+    * the only bind mounts are the run directory and that logo file — in the
+      ``-v``/``--volume`` spelling only. ``--mount``/``--volumes-from`` (and any
+      unrecognised mount-ish flag) are refused rather than parsed: a
+      ``--mount type=bind,source=…,target=/vhs/demo.mp4`` would shadow the run's
+      own file while every ``-i`` still innocently read ``/vhs/demo.mp4``,
+    * ``--network none`` is present and is actually ``none`` — the docstrings
+      lean on it, so it is verified rather than assumed,
+    * ``/vhs/promo.mp4`` is the ONE path under the run mount that is written.
+      ffmpeg accepts N outputs and ``-y`` is set, so checking only the last
+      token would let a second output truncate ``demo.mp4`` the moment ffmpeg
+      opened it.
 
-    Anything else — a second video, a ``movie=`` lavfi source, a mount of some
-    other directory — raises. Combined with ``--network none`` on the container,
-    the compositor structurally cannot show frames the run did not produce.
+    Scope boundary, deliberately: a path OUTSIDE the run-dir mount is not
+    policed. The run dir is the only writable mount and the container is
+    ``--rm``, so anything ffmpeg wrote elsewhere dies with it — it cannot reach
+    ``demo.mp4`` or a published artifact, which is what this audit is about.
 
     Raises:
-        PromoError: naming the offending input or mount.
+        PromoError: naming the offending input, graph, mount or output.
     """
     run_dir = Path(run_dir).resolve()
     source = f"{CONTAINER_RUN_DIR}/{render.PRIMARY_ARTIFACT}"
+    promo_out = f"{CONTAINER_RUN_DIR}/{PROMO_ARTIFACT}"
     logo_path = _container_logo_path(cfg)
 
     if cfg.brand_logo is not None and Path(cfg.brand_logo).suffix.lower() not in _RASTER_SUFFIXES:
@@ -599,36 +792,137 @@ def assert_only_demo_footage(argv: list[str], run_dir: Path, cfg: Config) -> Non
             "footage source"
         )
 
+    # ``-v`` here is docker's bind-mount flag: the ffmpeg side of the argv
+    # deliberately spells its verbosity ``-loglevel`` (never ``-v``), so this
+    # scan cannot confuse the two — and if a future edit did use ffmpeg's ``-v``,
+    # it would be refused as an unrecognised mount, which is the safe direction.
+    allowed_mounts = {f"{run_dir}:{CONTAINER_RUN_DIR}"}
+    if cfg.brand_logo is not None and logo_path is not None:
+        allowed_mounts.add(f"{Path(cfg.brand_logo).resolve()}:{logo_path}:ro")
+
     footage = 0
-    lavfi = False
+    network: Optional[str] = None
+    fmt: Optional[str] = None
+    read_indices: set[int] = set()  # tokens consumed as an input or a mount spec
+    value_indices: set[int] = set()  # tokens consumed as ANY flag's value
     i = 0
-    while i < len(argv) - 1:
+    while i < len(argv):
         token = argv[i]
-        if token == "-f":
-            lavfi = argv[i + 1] == "lavfi"
-            i += 2
+        name = _flag_name(token)
+        value, value_index = _flag_value(argv, i)
+        step = 1 if value_index is None else 2
+        # Value slots are recorded per branch, never for every token: a token
+        # that merely FOLLOWS a non-flag (the image name, say) is not a value.
+        slot = {value_index} if value_index is not None else set()
+
+        if name == "-f":
+            fmt = value
+            value_indices |= slot
+            i += step
             continue
-        if token == "-i":
-            value = argv[i + 1]
-            if lavfi:
+
+        if name == "-i":
+            if value is None:
+                raise PromoError("promo argv ends with a dangling -i")
+            value_indices |= slot
+            read_indices |= slot
+            if fmt == "lavfi":
                 if not _LAVFI_COLOR_RE.match(value):
                     raise PromoError(
                         f"promo refuses generated input {value!r}: only solid-colour "
                         "lavfi card backgrounds are allowed"
                     )
             elif value == source:
+                if fmt is not None:
+                    raise PromoError(
+                        f"promo refuses forced input format {fmt!r} on {source!r}: an "
+                        "indirecting demuxer (concat, image2, …) would read the "
+                        "artifact of record as a list of other files"
+                    )
                 footage += 1
             elif logo_path is not None and value == logo_path:
-                pass
+                if fmt != _LOGO_INPUT_FORMAT:
+                    raise PromoError(
+                        f"promo refuses brand logo input {value!r} without "
+                        f"-f {_LOGO_INPUT_FORMAT}: the logo is validated by file "
+                        "extension but decoded by content, so the still-image "
+                        "demuxer is what keeps a disguised video from animating"
+                    )
             else:
                 raise PromoError(
                     f"promo refuses foreign video input {value!r}: the only footage "
                     f"source is the run's own {render.PRIMARY_ARTIFACT}"
                 )
-            lavfi = False
-            i += 2
+            fmt = None
+            i += step
             continue
+
+        if name.startswith("-filter") or name in _GRAPH_VALUE_FLAGS:
+            if "script" in name:
+                raise PromoError(
+                    f"promo refuses {name}: a filtergraph read from a file is invisible "
+                    "to this audit, so its sources cannot be checked"
+                )
+            if name not in _GRAPH_VALUE_FLAGS:
+                raise PromoError(f"promo refuses unrecognised filter flag {name}")
+            if value is None:
+                raise PromoError(f"promo argv ends with a dangling {name}")
+            value_indices |= slot
+            read_indices |= slot
+            _assert_graph_grounded(name, value)
+            i += step
+            continue
+
+        if token.startswith("-") and _looks_like_mount_flag(name):
+            if name in _UNAUDITABLE_MOUNT_FLAGS:
+                raise PromoError(
+                    f"promo refuses {name}: only -v/--volume mounts can be audited "
+                    f"against the allow-list, and {name} could shadow "
+                    f"{source!r} with a foreign file while every -i still read it"
+                )
+            if name not in _BIND_FLAGS:
+                raise PromoError(
+                    f"promo refuses unrecognised mount flag {name}: an audit that only "
+                    "knows the spellings it was written for is not an audit"
+                )
+            if value not in allowed_mounts:
+                raise PromoError(
+                    f"promo refuses bind mount {value!r}: only the run directory "
+                    "(and the brand logo, read-only) may be visible to the compositor"
+                )
+            value_indices |= slot
+            read_indices |= slot
+            i += step
+            continue
+
+        if name in _NETWORK_FLAGS:
+            network = value
+            value_indices |= slot
+            i += step
+            continue
+
         i += 1
+
+    # BACKSTOP, position-independent by design. A left-to-right walk skips each
+    # flag's value slot, so a flag hidden in another flag's value is invisible to
+    # it: ``-f -v /anywhere:/vhs`` makes ``-v`` look like a format name, and the
+    # mount is never audited. The audit this replaced swept for ``-v`` over the
+    # whole argv precisely because position is not something an audit should have
+    # to trust; this keeps that property for every family it knows. No argv this
+    # module builds puts a flag in a value slot, so the rule costs nothing.
+    for k in sorted(value_indices):
+        hidden = argv[k]
+        hidden_name = _flag_name(hidden)
+        if (
+            hidden_name == "-i"
+            or hidden_name.startswith("-filter")
+            or (hidden.startswith("-") and _looks_like_mount_flag(hidden_name))
+        ):
+            raise PromoError(
+                f"promo refuses {hidden!r} in the value slot of {argv[k - 1]!r}: a flag "
+                "hidden in another flag's value would never be audited, which is how "
+                "an unchecked mount or input gets in"
+            )
 
     if footage != 1:
         raise PromoError(
@@ -636,25 +930,32 @@ def assert_only_demo_footage(argv: list[str], run_dir: Path, cfg: Config) -> Non
             f"(found {footage})"
         )
 
-    # ``-v`` here is docker's bind-mount flag: the ffmpeg side of the argv
-    # deliberately spells its verbosity ``-loglevel`` (never ``-v``), so this
-    # scan cannot confuse the two.
-    allowed_mounts = {f"{run_dir}:{CONTAINER_RUN_DIR}"}
-    if cfg.brand_logo is not None and logo_path is not None:
-        allowed_mounts.add(f"{Path(cfg.brand_logo).resolve()}:{logo_path}:ro")
-    for j, token in enumerate(argv[:-1]):
-        if token == "-v" and argv[j + 1] not in allowed_mounts:
-            raise PromoError(
-                f"promo refuses bind mount {argv[j + 1]!r}: only the run directory "
-                "(and the brand logo, read-only) may be visible to the compositor"
-            )
-
-    output = argv[-1] if argv else ""
-    if output != f"{CONTAINER_RUN_DIR}/{PROMO_ARTIFACT}":
+    # Every remaining token that resolves under the run-dir mount is something
+    # ffmpeg would OPEN FOR WRITING, and ffmpeg truncates an output when it opens
+    # it: a second output naming demo.mp4 destroys the artifact of record before
+    # a single frame is written. Position is not the check — presence is.
+    written = [
+        token for k, token in enumerate(argv)
+        if k not in read_indices and _under_run_mount(token) is not None
+    ]
+    extra = [token for token in written if _under_run_mount(token) != promo_out]
+    if extra:
         raise PromoError(
-            f"promo must write {CONTAINER_RUN_DIR}/{PROMO_ARTIFACT}, not {output!r} — "
-            f"{render.PRIMARY_ARTIFACT} and the published guide artifacts are never "
-            "written by the compositor"
+            f"promo must write {promo_out}, not {extra[0]!r} — ffmpeg accepts several "
+            f"outputs and truncates each as it opens it, so {render.PRIMARY_ARTIFACT} "
+            "and the published guide artifacts are never written by the compositor"
+        )
+    if len(written) != 1 or argv[-1] != promo_out:
+        raise PromoError(
+            f"promo must write {promo_out} exactly once, as its final argument "
+            f"(found {written!r})"
+        )
+
+    if network != "none":
+        raise PromoError(
+            f"promo refuses to run with --network {network!r}: compositing reads only "
+            "what is mounted, and a network namespace would let ffmpeg fetch a remote "
+            "source through an http/rtmp input"
         )
 
 
@@ -727,7 +1028,12 @@ def build_promo_argv(
             "-i", f"color=c={st.card_bg}:s={CANVAS_W}x{CANVAS_H}:r={FPS}",
         ]
     if plan.logo_index is not None and logo_path is not None:
-        argv += ["-i", logo_path]
+        # ``-f image2`` pins the still-image demuxer: config.py validates the
+        # logo by EXTENSION and ffmpeg decodes by CONTENT, so an mp4 named
+        # logo.png must not be able to animate over the cards. The filtergraph
+        # trims the same stream to one frame (LOGO_STILL_FILTERS) — belt and
+        # braces, and assert_only_demo_footage requires this flag.
+        argv += ["-f", _LOGO_INPUT_FORMAT, "-i", logo_path]
     argv += [
         "-filter_complex", graph,
         "-map", f"[{OUT_LABEL}]",
@@ -763,7 +1069,9 @@ def source_duration_s(run_dir: Path, cfg: Config, image: Optional[str] = None) -
     host = shutil.which("ffprobe")
     if host is not None:
         duration = render._mp4_duration_s(mp4, host)
-        if duration is not None:
+        # ffprobe prints "nan" for some malformed files and float() accepts it;
+        # a NaN bound would pass every segment check instead of failing one.
+        if duration is not None and math.isfinite(duration):
             return duration
     cmd = [
         "docker", "run", "--rm",
@@ -785,9 +1093,10 @@ def source_duration_s(run_dir: Path, cfg: Config, image: Optional[str] = None) -
     if proc.returncode != 0:
         return None
     try:
-        return float((proc.stdout or "").strip())
+        measured = float((proc.stdout or "").strip())
     except ValueError:
         return None
+    return measured if math.isfinite(measured) else None
 
 
 def validate_promo(promo_mp4: Path, expected_s: float, preset: int = DEFAULT_DURATION) -> Path:
@@ -812,6 +1121,7 @@ def validate_promo(promo_mp4: Path, expected_s: float, preset: int = DEFAULT_DUR
         PromoError: if the file is missing, too small, or the wrong length.
     """
     dp = duration_preset(preset)
+    expected_s = _finite(expected_s, "expected promo duration")
     if not promo_mp4.exists():
         raise PromoError(f"{promo_mp4.name}: missing after compositing")
     size = promo_mp4.stat().st_size
@@ -824,6 +1134,11 @@ def validate_promo(promo_mp4: Path, expected_s: float, preset: int = DEFAULT_DUR
     duration = render._mp4_duration_s(promo_mp4, ffprobe)
     if duration is None:
         raise PromoError(f"{promo_mp4.name}: ffprobe could not read duration")
+    if not math.isfinite(duration):
+        raise PromoError(
+            f"{promo_mp4.name}: ffprobe could not read duration — {duration!r} is not "
+            "a finite number, and comparing against it would accept any length"
+        )
     slack = expected_s * DURATION_TOLERANCE_FRAC + DURATION_TOLERANCE_S
     if abs(duration - expected_s) > slack:
         raise PromoError(
@@ -862,10 +1177,16 @@ def _hint(stderr: str) -> str:
 
 
 def _log_skip(run_dir: Path, message: str) -> None:
-    """Record why there is no promo. Best-effort, like the promo itself."""
+    """Record why there is no promo. Best-effort, like the promo itself.
+
+    Catches everything: this runs on the failure path of a function that
+    promises never to fail the run, so it must not become the thing that does.
+    ``run_dir`` may be whatever the caller passed (an unresolvable path is one
+    of the failures being logged), so even building the path can raise.
+    """
     try:
         (Path(run_dir) / PROMO_LOG).write_text(message + "\n", encoding="utf-8")
-    except OSError:  # pragma: no cover - unwritable run dir
+    except Exception:  # pragma: no cover - unwritable/unusable run dir
         pass
 
 
@@ -880,12 +1201,22 @@ def render_promo(
 ) -> Optional[Path]:
     """Composite ``promo.mp4`` from the run's ``demo.mp4``; ``None`` on failure.
 
-    BEST-EFFORT, exactly like ``render._generate_gif_preview``: every failure
-    mode — no ``demo.mp4``, an unmeasurable duration, an ungrounded script, a
-    non-zero ffmpeg, a timeout, a promo that fails its size/duration gate —
-    returns ``None`` and writes the reason to ``promo.log``. A promo must never
-    fail the run, and it never touches ``demo.mp4`` or any published guide
-    artifact (the only output path in the argv is ``/vhs/promo.mp4``).
+    BEST-EFFORT, exactly like ``render._generate_gif_preview``: EVERY failure
+    mode returns ``None`` and writes the reason to ``promo.log`` — no
+    ``demo.mp4``, an unmeasurable duration, an ungrounded script, a non-zero
+    ffmpeg, a timeout, a promo that fails its size/duration gate, and equally
+    the ones nobody enumerated. That is why the guard is a bare ``except
+    Exception`` covering the whole body rather than a list of expected types: a
+    caption holding a NUL byte makes ``subprocess.run`` raise ``ValueError``,
+    which a ``(PromoError, TimeoutExpired, OSError)`` guard would let escape and
+    fail the run this function promises never to fail. "Best-effort" is a
+    guarantee about the caller, so it has to be total. ``demo.mp4`` and the
+    published guide artifacts are never touched (the only output path in the
+    argv is ``/vhs/promo.mp4``).
+
+    This function does NOT check ``manifest.verified`` — see the module
+    docstring's trust boundary: the caller establishes that the run's replay
+    passed, this module only guarantees the footage is the run's own.
 
     Args:
         run_dir: run directory holding ``demo.mp4``; mounted at ``/vhs``.
@@ -896,10 +1227,18 @@ def render_promo(
         image: optional image override (must carry ffmpeg/ffprobe).
 
     Returns:
-        Path to the validated ``promo.mp4``, or ``None``.
+        Path to the validated ``promo.mp4``, or ``None``. THE RETURN VALUE IS
+        THE SIGNAL, not the presence of the file: when ffmpeg succeeds but the
+        size/duration gate then fails, the un-validated ``promo.mp4`` is left in
+        the run dir on purpose (it is the evidence ``promo.log`` refers to). A
+        caller that publishes by globbing the run dir would ship exactly the
+        truncated cut this module refused.
     """
-    run_dir = Path(run_dir).resolve()
     try:
+        # Inside the guard: resolve() hits the filesystem and can raise, and a
+        # promise of "never fails the run" that starts before the try is a
+        # promise with a hole in it.
+        run_dir = Path(run_dir).resolve()
         source = run_dir / render.PRIMARY_ARTIFACT
         if not source.exists():
             raise PromoError(f"{render.PRIMARY_ARTIFACT} not found in {run_dir}")
@@ -926,8 +1265,8 @@ def render_promo(
             raise PromoError(f"ffmpeg exited with {proc.returncode}:\n{tail}{_hint(tail)}")
         expected = expected_promo_duration_s(script, style=style, preset=preset)
         return validate_promo(run_dir / PROMO_ARTIFACT, expected, preset=preset)
-    except (PromoError, subprocess.TimeoutExpired, OSError) as e:
-        _log_skip(run_dir, f"promo skipped: {e}")
+    except Exception as e:  # noqa: BLE001 - total by contract; see the docstring
+        _log_skip(run_dir, f"promo skipped: {type(e).__name__}: {e}")
         return None
 
 
