@@ -912,12 +912,15 @@ def assert_only_demo_footage(argv: list[str], run_dir: Path, cfg: Config) -> Non
     # module builds puts a flag in a value slot, so the rule costs nothing.
     for k in sorted(value_indices):
         hidden = argv[k]
-        hidden_name = _flag_name(hidden)
-        if (
-            hidden_name == "-i"
-            or hidden_name.startswith("-filter")
-            or (hidden.startswith("-") and _looks_like_mount_flag(hidden_name))
-        ):
+        # Refuse ANY flag-shaped token in a value slot, not just the families
+        # named above: an executed-probe re-audit showed `-f` and `--network`
+        # were unguarded, so `-vf -f concat` hid the demuxer flag from the
+        # forced-demuxer rule and `-vf --network bridge` hid the network flag
+        # from its gate. The complete inventory of value-slot tokens this
+        # module ever emits is {lavfi, image2, none, /vhs/demo.mp4,
+        # /brand/logo.png, <host>:/vhs, color=..., <graph>} — none begins with
+        # "-", so the broad rule is provably false-positive-free here.
+        if hidden.startswith("-"):
             raise PromoError(
                 f"promo refuses {hidden!r} in the value slot of {argv[k - 1]!r}: a flag "
                 "hidden in another flag's value would never be audited, which is how "

@@ -466,7 +466,18 @@ class TestAuditHolesFoundByProbe:
             assert_only_demo_footage(argv, tmp_run_dir, Config())
 
     @pytest.mark.parametrize(
-        "spelling", ["movie@1=", "amovie@k=", "movie @2 =", "movie@=", "movie@'q'="]
+        "spelling",
+        [
+            "movie@1=",
+            "amovie@k=",
+            "movie @2 =",
+            "movie@=",
+            "movie@'q'=",
+            # ffmpeg DECODES a space inside the instance name. `@[^=]*` catches
+            # it; a "tidied" `@[^=\s]*` would not — this case is the only thing
+            # standing between the charset and a silently reopened hole.
+            "movie@ 1=",
+        ],
     )
     def test_filtergraph_movie_source_with_an_instance_name_rejected(
         self, tmp_run_dir: Path, spelling: str
