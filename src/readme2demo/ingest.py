@@ -22,7 +22,7 @@ import subprocess
 from pathlib import Path
 
 from readme2demo import llm
-from readme2demo.types import Plan
+from readme2demo.types import Plan, UrlVerdict
 
 _URL_RE = re.compile(
     r"^https://(?:github|gitlab)\.com/"  # allowed hosts only (MVP)
@@ -49,6 +49,80 @@ _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 class IngestError(RuntimeError):
     """Raised when cloning or planning cannot proceed (bad URL, git failure)."""
+
+
+
+# Hosts we treat as cloneable git forges in the MVP. Keep in sync with _URL_RE.
+_GIT_HOSTS = ("github.com", "gitlab.com")
+# Path segments that indicate a browser deep-link into a repo (not extra GitLab groups).
+_GIT_DEEP_LINK_MARKERS = frozenset({"tree", "blob", "commit", "pulls", "pull", "issues", "wiki", "releases", "actions", "settings", "projects", "network", "security", "pulse", "graphs"})
+
+
+def classify_url(url: str) -> UrlVerdict:
+    """Classify *url* as a git repository, hosted docs page, or unsupported input.
+
+    Pure string logic only — no network, filesystem, or subprocess. Intended as
+    the vocabulary for docs-site ingestion (#67); not yet wired into the pipeline.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return UrlVerdict(kind="unsupported", reason="empty URL")
+
+    # Local paths / file URLs — unsupported here; local acceptance is #74.
+    if raw.startswith("file:") or raw.startswith("/") or raw.startswith("."):
+        return UrlVerdict(kind="unsupported", reason="local path is not supported")
+
+    # SSH remotes are not accepted by the MVP clone path.
+    if raw.startswith("git@") or raw.startswith("ssh://"):
+        return UrlVerdict(kind="unsupported", reason="ssh remotes are not supported — use https")
+
+    # Reject embedded-URL smuggling early (must never be classified as git).
+    lower = raw.casefold()
+    if lower.count("://") > 1 or "https://" in lower[8:]:
+        return UrlVerdict(kind="unsupported", reason="URL contains an embedded URL and is not a plain git host path")
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(raw)
+    scheme = (parsed.scheme or "").casefold()
+    if scheme == "http":
+        return UrlVerdict(kind="unsupported", reason="plain http is not supported — use https")
+    if scheme != "https":
+        return UrlVerdict(kind="unsupported", reason=f"unsupported scheme {parsed.scheme!r}")
+
+    host = (parsed.hostname or "").casefold()
+    if host.startswith("www."):
+        host = host[4:]
+
+    # GitHub Pages sites are docs, not cloneable repos.
+    if host.endswith(".github.io"):
+        return UrlVerdict(kind="docs", reason="GitHub Pages site")
+
+    path = (parsed.path or "").strip("/")
+    # Drop trailing .git for matching
+    path_no_git = path[:-4] if path.endswith(".git") else path
+    segments = [s for s in path_no_git.split("/") if s]
+
+    if host in _GIT_HOSTS:
+        if len(segments) < 2:
+            return UrlVerdict(
+                kind="unsupported",
+                reason="no owner/repo path segment",
+            )
+        # Reduce deep links to owner/repo root. GitLab subgroups keep extra
+        # segments until a known deep-link marker appears.
+        owner_repo: list[str] = []
+        for i, seg in enumerate(segments):
+            if seg in _GIT_DEEP_LINK_MARKERS and i >= 2:
+                break
+            owner_repo.append(seg)
+        if len(owner_repo) < 2:
+            return UrlVerdict(kind="unsupported", reason="no owner/repo path segment")
+        repo_url = f"https://{host}/{'/'.join(owner_repo)}"
+        return UrlVerdict(kind="git", repo_url=repo_url, reason="cloneable repository URL")
+
+    # Any other https URL is treated as a potential docs page for this slice.
+    return UrlVerdict(kind="docs", reason="non-git https URL treated as docs page")
 
 
 def clone_repo(repo_url: str, dest: Path, timeout: int = 300) -> str:

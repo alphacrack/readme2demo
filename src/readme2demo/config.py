@@ -49,7 +49,10 @@ class Config(BaseModel):
     # skipping the paid agent stage and everything downstream.
     dry_run: bool = False
     verify_timeout_s: int = 900
-    verify_retries: int = 1  # plain script retries before distiller feedback loop
+    # Number of plain-script retries after the first verify attempt, before
+    # falling back to the distiller feedback loop (0 = no retries, 1 attempt
+    # total; N = N retries, N+1 attempts total; negative values clamp to 0).
+    verify_retries: int = 1
     distill_retries: int = 1  # distiller feedback loops on verify failure
     skip_video: bool = False
 

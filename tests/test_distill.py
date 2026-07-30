@@ -416,6 +416,52 @@ def test_commands_sh_python_inline_flag_becomes_grep_i(tmp_path: Path) -> None:
     assert "(?i)" not in text.split("grep -qiE")[1].splitlines()[0]
 
 
+
+
+def test_commands_sh_combined_inline_flags(tmp_path: Path) -> None:
+    """Regression (#108): (?is) must strip to -qiE, not pass flags to grep."""
+    plan = make_plan()
+    plan.success_criteria.expected_pattern = "(?is)hello.world"
+    write_artifacts(
+        make_output(["python examples/hello.py"]), tmp_path, plan,
+        "https://github.com/x/y.git",
+    )
+    text = (tmp_path / "commands.sh").read_text(encoding="utf-8")
+    assert "grep -qiE" in text
+    line = [ln for ln in text.splitlines() if "grep -qiE" in ln][0]
+    assert "(?i" not in line and "(?s" not in line
+    assert "hello.world" in line
+
+
+def test_commands_sh_ms_flags_stripped_without_i(tmp_path: Path) -> None:
+    """Regression (#108): (?m)/(?s) drop silently; pattern body kept."""
+    plan = make_plan()
+    plan.success_criteria.expected_pattern = "(?m)^Hello"
+    write_artifacts(
+        make_output(["python examples/hello.py"]), tmp_path, plan,
+        "https://github.com/x/y.git",
+    )
+    text = (tmp_path / "commands.sh").read_text(encoding="utf-8")
+    assert "grep -qE" in text
+    assert "grep -qiE" not in text
+    # grep line must use the stripped body; fail-msg may still quote the original
+    grep_line = [ln for ln in text.splitlines() if "grep -qE" in ln][0]
+    assert "(?m)" not in grep_line
+    assert "^Hello" in grep_line
+
+
+def test_commands_sh_x_flag_raises_at_distill(tmp_path: Path) -> None:
+    """Regression (#108): (?x) must fail at distill, not as a verify miss."""
+    from readme2demo.distill import DistillError, write_artifacts
+    plan = make_plan()
+    plan.success_criteria.expected_pattern = "(?x)hello  # comment"
+    with pytest.raises(DistillError, match=r"\(\?x\)|verbose"):
+        write_artifacts(
+            make_output(["python examples/hello.py"]), tmp_path, plan,
+            "https://github.com/x/y.git",
+        )
+
+
 def test_demo_tape_contents(artifacts) -> None:
     run_dir, _, _ = artifacts
     tape = (run_dir / "demo.tape").read_text(encoding="utf-8")

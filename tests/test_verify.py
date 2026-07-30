@@ -186,6 +186,59 @@ class TestRunVerify:
         assert report.attempts == 1
         assert len(created) == 1
 
+    def test_verify_retries_zero_is_one_attempt(
+        self, tmp_run_dir: Path, fake_sandboxes
+    ) -> None:
+        """Regression: verify_retries=0 means no retries — exactly 1 attempt,
+        proven by counting Sandbox instances actually constructed (not by
+        re-deriving total_attempts)."""
+        _write_script(tmp_run_dir)
+        created = fake_sandboxes([(1, "fail")])
+        report = run_verify(tmp_run_dir, _plan(), Config(verify_retries=0))
+        assert len(created) == 1
+        assert report.attempts == 1
+
+    def test_verify_retries_default_is_two_attempts(
+        self, tmp_run_dir: Path, fake_sandboxes
+    ) -> None:
+        """Regression: the default verify_retries=1 must keep producing
+        exactly 2 attempts (today's effective behaviour), proven by counting
+        Sandbox instances actually constructed."""
+        _write_script(tmp_run_dir)
+        created = fake_sandboxes([(1, "fail"), (1, "fail again")])
+        report = run_verify(tmp_run_dir, _plan(), Config())
+        assert len(created) == 2
+        assert report.attempts == 2
+
+    def test_verify_retries_three_is_four_attempts(
+        self, tmp_run_dir: Path, fake_sandboxes
+    ) -> None:
+        """Regression (#45): verify_retries is documented as a retry COUNT,
+        not a boolean — verify_retries=3 must drive 4 real sandbox replays
+        (1 initial attempt + 3 retries), not collapse to 2 like any value
+        >= 1 used to. Proven by counting Sandbox instances actually
+        constructed, not by re-deriving total_attempts."""
+        _write_script(tmp_run_dir)
+        created = fake_sandboxes(
+            [(1, "fail 1"), (1, "fail 2"), (1, "fail 3"), (1, "fail 4")]
+        )
+        report = run_verify(tmp_run_dir, _plan(), Config(verify_retries=3))
+        assert len(created) == 4
+        assert report.attempts == 4
+
+    def test_verify_retries_negative_clamps_to_one_attempt(
+        self, tmp_run_dir: Path, fake_sandboxes
+    ) -> None:
+        """Regression (#45): a negative verify_retries must clamp to zero
+        retries (1 attempt total) rather than skipping the loop body
+        entirely or underflowing, proven by counting Sandbox instances
+        actually constructed."""
+        _write_script(tmp_run_dir)
+        created = fake_sandboxes([(1, "fail")])
+        report = run_verify(tmp_run_dir, _plan(), Config(verify_retries=-2))
+        assert len(created) == 1
+        assert report.attempts == 1
+
     def test_script_replayed_from_tmp_copy(self, tmp_run_dir: Path, fake_sandboxes) -> None:
         """The script is copied to /tmp (NOT /work) so its own `git clone .`
         preamble finds /work empty, then replayed with the verify timeout."""
