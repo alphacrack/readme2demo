@@ -497,6 +497,136 @@ def write_commands_sh(out: DistillOutput, run_dir: Path, plan: Plan, repo_url: s
     return script_path
 
 
+# -- tape timing model (mirrors templates/demo.tape.j2) --------------------------
+#
+# These constants and helpers encode the SAME timing the tape template renders,
+# so ``step_timestamps`` can compute where each guide step lands in demo.mp4
+# without re-parsing the tape. They are drift-locked to the template by
+# ``test_step_timestamps_total_matches_expected_min_duration``: the per-step
+# model here must sum to ``render.expected_min_duration_s`` of the rendered tape.
+
+#: Floor write_tape clamps every ``sleep_after_s`` to before rendering, so
+#: viewers can read each command's output. Shared with ``step_timestamps`` so
+#: the timeline uses the SAME sleeps the video actually plays (raw TapeCommands
+#: carry 1.0s for heredocs and 3.0s for single commands — never the rendered
+#: value). Keep this the single source of the ``2.0`` (see issue #172).
+TAPE_SLEEP_FLOOR_S = 2.0
+
+#: ``Set TypingSpeed`` in demo.tape.j2 (per-char typing cost, milliseconds).
+TAPE_TYPING_SPEED_MS = 50.0
+#: ``Sleep 800ms`` after a typed ``# comment`` title line.
+TAPE_COMMENT_SLEEP_S = 0.8
+#: Trailing ``Sleep 3s`` at the end of the tape.
+TAPE_FINAL_SLEEP_S = 3.0
+#: Hidden preamble ``Type`` lines (Hide/Show block) — typed chars cost
+#: tape-clock time but record no frames. Must match demo.tape.j2 verbatim.
+TAPE_PREAMBLE_SEED = "cp -a /vhs/worktree/. /work/ 2>/dev/null || true; cd /work && clear"
+TAPE_PREAMBLE_PLAIN = "cd /work && clear"
+
+
+def clamp_sleep_s(sleep_after_s: float) -> float:
+    """The post-clamp sleep write_tape renders for a TapeCommand.
+
+    Raw ``TapeCommand.sleep_after_s`` values are floored to
+    :data:`TAPE_SLEEP_FLOOR_S` before rendering; both ``write_tape`` and
+    ``step_timestamps`` route through here so the timeline can never describe
+    a shorter pause than the video actually plays.
+    """
+    return max(sleep_after_s, TAPE_SLEEP_FLOOR_S)
+
+
+def step_timestamps(tape: list[TapeCommand], seed_worktree: bool) -> dict:
+    """Per-step ``[start, end]`` offsets on the demo.tape clock — a PURE function.
+
+    Walks ``tape`` with the exact timing model of ``templates/demo.tape.j2``
+    (per-char typing at :data:`TAPE_TYPING_SPEED_MS`, a ``# comment`` line +
+    800ms where ``comment`` is set, per-line typing for heredoc ``lines``, the
+    clamped ``sleep_after_s``, the hidden preamble, and the trailing 3s) and
+    returns the schema written to ``run_dir/step_timestamps.json``. No LLM, no
+    I/O, no Docker — this is additive metadata ABOUT the tape and never changes
+    what is on it.
+
+    HONESTY: every offset is a LOWER BOUND. VHS ``Wait`` blocks for each
+    command's real execution time, which is unknown at tape-construction time,
+    so offsets shift right cumulatively as commands actually run. ``n_waits``
+    per step is recorded precisely so a post-render consumer can measure the
+    surplus (ffprobe duration − ``total_min_s``) and redistribute it across the
+    waits — that correction is a follow-up (#114), not computed here. The
+    hidden preamble also consumes tape-clock time but records no frames, so the
+    video clock ≈ tape clock − hidden spans + waits.
+
+    Args:
+        tape: the FINAL tape written for the video (list of TapeCommand).
+        seed_worktree: same flag passed to ``write_tape`` — the seed variant's
+            preamble types a longer line, shifting every offset right.
+
+    Returns:
+        ``{typing_speed_ms, preamble_min_s, final_sleep_s, total_min_s, note,
+        steps: [{index, title, cmd, start_min_s, end_min_s, n_waits}, ...]}``.
+    """
+    per_char_s = TAPE_TYPING_SPEED_MS / 1000.0
+    preamble_line = TAPE_PREAMBLE_SEED if seed_worktree else TAPE_PREAMBLE_PLAIN
+    # The preamble's Type line costs typing time (counted in both this model and
+    # render.expected_min_duration_s); its Wait is excluded, like every Wait.
+    preamble_s = len(preamble_line) * per_char_s
+
+    clock = preamble_s
+    steps: list[dict] = []
+    effective_title = ""  # carried forward across continuation steps (comment=None)
+    for index, tc in enumerate(tape):
+        start = clock
+        if tc.comment is not None:
+            # First command under a heading carries the title as a `# comment`
+            # line (tape_from_guide sets comment only when the title changes);
+            # continuation steps inherit the last one for chapter grouping.
+            effective_title = tc.comment
+            clock += len("# " + tc.comment) * per_char_s
+            clock += TAPE_COMMENT_SLEEP_S
+        if tc.lines:
+            for ln in tc.lines:
+                clock += len(ln) * per_char_s
+        else:
+            clock += len(tc.cmd) * per_char_s
+        # demo.tape.j2 emits exactly one `Wait` per rendered command (both the
+        # heredoc and single-line branches) — recorded, not timed (lower bound).
+        n_waits = 1
+        clock += clamp_sleep_s(tc.sleep_after_s)
+        steps.append(
+            {
+                "index": index,
+                "title": effective_title,
+                "cmd": tc.cmd,
+                "start_min_s": round(start, 3),
+                "end_min_s": round(clock, 3),
+                "n_waits": n_waits,
+            }
+        )
+    total = clock + TAPE_FINAL_SLEEP_S
+    return {
+        "typing_speed_ms": TAPE_TYPING_SPEED_MS,
+        "preamble_min_s": round(preamble_s, 3),
+        "final_sleep_s": TAPE_FINAL_SLEEP_S,
+        "total_min_s": round(total, 3),
+        "note": (
+            "Offsets are LOWER BOUNDS on the tape clock: VHS Wait (command "
+            "execution time) is excluded and shifts every offset right "
+            "cumulatively. n_waits per step exists for post-render correction "
+            "(redistribute ffprobe duration - total_min_s across the waits)."
+        ),
+        "steps": steps,
+    }
+
+
+def write_step_timestamps(
+    tape: list[TapeCommand], run_dir: Path, seed_worktree: bool
+) -> Path:
+    """Write ``run_dir/step_timestamps.json`` from :func:`step_timestamps`."""
+    dest = run_dir / "step_timestamps.json"
+    data = step_timestamps(tape, seed_worktree)
+    dest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return dest
+
+
 def write_tape(tape: list[TapeCommand], run_dir: Path, seed_worktree: bool = False) -> Path:
     """Render demo.tape from TapeCommands.
 
@@ -522,7 +652,7 @@ def write_tape(tape: list[TapeCommand], run_dir: Path, seed_worktree: bool = Fal
     env.filters["vhs_quote"] = vhs_quote
     env.filters["vhs_wait"] = vhs_wait_pattern
     clamped = [
-        tc.model_copy(update={"sleep_after_s": max(tc.sleep_after_s, 2.0)})
+        tc.model_copy(update={"sleep_after_s": clamp_sleep_s(tc.sleep_after_s)})
         for tc in tape
     ]
     tape_text = env.get_template("demo.tape.j2").render(
@@ -802,5 +932,11 @@ def build_tape_from_step_by_step(
     # A repo's own guide (no clone step) assumes the checkout is present; seed
     # /work from the verified worktree so its `pip install -e .`/build steps
     # aren't run in an empty directory.
-    write_tape(final_tape, run_dir, seed_worktree=not _tape_fetches_code(final_tape))
+    seed_worktree = not _tape_fetches_code(final_tape)
+    write_tape(final_tape, run_dir, seed_worktree=seed_worktree)
+    # step_timestamps.json: per-step [start, end] offsets on the video clock,
+    # for YouTube chapter markers and the #114 promo cut's demo_segment source.
+    # Derived metadata ONLY — computed from the SAME final_tape and seed flag
+    # write_tape just rendered, so it can never describe steps the video omits.
+    write_step_timestamps(final_tape, run_dir, seed_worktree=seed_worktree)
     return coverage
