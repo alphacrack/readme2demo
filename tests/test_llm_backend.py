@@ -342,10 +342,25 @@ def test_anthropic_default_model_matches_config():
     assert llm.PROVIDERS["anthropic"].default_model == Config().model
 
 
-def test_extract_json_accepts_single_line_fenced_json():
-    text = 'diagnostic {not json} ```json {"ok": true}```'
-
-    assert llm.extract_json(text) == '{"ok": true}'
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ('diagnostic {not json} ```json {"ok": true}```', {"ok": True}),
+        ('```json\n{"ok": true}\n```', {"ok": True}),
+        ('```\n{"ok": true}\n```', {"ok": True}),
+        ('diagnostic {"ok": true} trailing prose', {"ok": True}),
+        ('Setup:\n```bash\npip install x\n```\n{"feasible": true}', {"feasible": True}),
+        (
+            'Plan:\n```bash\npip install x\n```\n```json\n{"feasible": true}\n```',
+            {"feasible": True},
+        ),
+        ('Run ```pip install x``` first.\n{"feasible": true}', {"feasible": True}),
+        ('```json\n{"description": "literal } in string"}\n```', {"description": "literal } in string"}),
+    ],
+)
+def test_extract_json_handles_fenced_json_shapes(response, expected):
+    """Regression (#97): compact and adjacent fences must not trip on brace-bearing prose."""
+    assert json.loads(llm.extract_json(response)) == expected
 
 
 # -- openai backend -----------------------------------------------------------------
