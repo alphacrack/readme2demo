@@ -50,9 +50,8 @@ def test_timeout_error_reports_override_image(tmp_path):
                 render.run_render(tmp_path, cfg, image=custom_image)
 
 
-def test_vhs_image_removed_from_config():
-    """The dead vhs_image config field should no longer exist."""
-    cfg = Config()
-    assert not hasattr(cfg, "vhs_image"), (
-        "Config.vhs_image should be removed (dead code, see #36)"
-    )
+def test_vhs_image_is_excluded_from_serialized_config():
+    """The deprecated compatibility field must not affect runtime config."""
+    with pytest.warns(DeprecationWarning, match="vhs_image.*deprecated"):
+        cfg = Config(vhs_image="old/image:tag")
+    assert "vhs_image" not in cfg.model_dump()

@@ -233,6 +233,9 @@ class ClaudeCodeEngine(AgentEngine):
         """
         # Bash tool_use ids waiting for their tool_result, in emission order.
         pending_bash: dict[str, CommandEntry] = {}
+        # Freshly-seen entry in the assistant branch; popped (possibly absent,
+        # hence Optional) in the user/tool_result branch.
+        entry: CommandEntry | None
         entries: list[CommandEntry] = []
         fixes: list[FixMarker] = []
         file_edits: list[str] = []

@@ -10,7 +10,7 @@ import pytest
 from readme2demo import ingest as ingest_mod
 from readme2demo.config import Config
 from readme2demo.manifest import STAGES, Manifest
-from readme2demo.orchestrator import Orchestrator, PipelineError
+from readme2demo.orchestrator import Orchestrator, PipelineError, summarize_markdown
 from readme2demo.types import Plan, SuccessCriteria
 
 
@@ -37,6 +37,36 @@ def test_manifest_roundtrip(tmp_path: Path):
     assert loaded.stages["ingest"].cost_usd == 0.01
     assert loaded.total_cost_usd == 0.01
     assert loaded.next_stage() == "agent"
+
+
+def test_regression_stage_fail_records_cost_and_updates_total(tmp_path: Path):
+    """Regression (#103): a stage that pays and then fails must not report $0.00.
+
+    The distiller can raise after two paid LLM calls (its grounding retry), so
+    stage_fail accounts spend the same way stage_complete does.
+    """
+    m = Manifest.create(tmp_path / "rf", "https://github.com/x/y", "claude-code", "img")
+    m.stage_start("ingest")
+    m.stage_complete("ingest", cost_usd=0.01)
+    m.stage_start("distill")
+    m.stage_fail("distill", "Distiller produced ungrounded commands", cost_usd=0.04)
+
+    loaded = Manifest.load(tmp_path / "rf")
+    assert loaded.stages["distill"].status == "failed"
+    assert loaded.stages["distill"].cost_usd == pytest.approx(0.04)
+    assert loaded.total_cost_usd == pytest.approx(0.05)
+
+
+def test_stage_fail_without_cost_leaves_total_unchanged(tmp_path: Path):
+    """A failure with no recoverable spend must not perturb the total (#103)."""
+    m = Manifest.create(tmp_path / "rg", "https://github.com/x/y", "claude-code", "img")
+    m.stage_start("ingest")
+    m.stage_complete("ingest", cost_usd=0.02)
+    m.stage_start("agent")
+    m.stage_fail("agent", "engine exited 127")
+
+    assert m.stages["agent"].cost_usd == 0.0
+    assert m.total_cost_usd == pytest.approx(0.02)
 
 
 def test_manifest_next_stage_order(tmp_path: Path):
@@ -139,6 +169,42 @@ def test_resume_skips_completed_stages(tmp_path: Path, monkeypatch):
     assert result.next_stage() is None
 
 
+def test_regression_failed_distill_bills_its_llm_spend(tmp_path: Path, monkeypatch):
+    """Regression (#103): a DistillError after paid calls lands on the manifest.
+
+    The distiller's grounding retry means failure can arrive after two LLM
+    calls. Before this fix the orchestrator called stage_fail without a cost,
+    so the run that most needs a spend figure reported $0.00.
+    """
+    from readme2demo import distill as distill_mod
+    from readme2demo.distill import DistillError
+    from readme2demo.types import AgentResult, CommandLog
+
+    cfg = Config(runs_dir=tmp_path)
+    orch = Orchestrator.new_run("https://github.com/x/y", cfg)
+    (orch.run_dir / "plan.json").write_text(make_plan().model_dump_json())
+    (orch.run_dir / "command_log.json").write_text(
+        CommandLog(
+            engine="claude-code", result=AgentResult(outcome="success")
+        ).model_dump_json()
+    )
+    for s in ("ingest", "agent", "normalize"):
+        orch.manifest.stage_start(s)
+        orch.manifest.stage_complete(s, cost_usd=0.01)
+
+    def boom(*args, **kwargs):
+        raise DistillError("ungrounded after retry", cost_usd=0.06)
+
+    monkeypatch.setattr(distill_mod, "distill", boom)
+    with pytest.raises(DistillError):
+        orch.run()
+
+    loaded = Manifest.load(orch.run_dir)
+    assert loaded.stages["distill"].status == "failed"
+    assert loaded.stages["distill"].cost_usd == pytest.approx(0.06)
+    assert loaded.total_cost_usd == pytest.approx(0.09)  # 3 x 0.01 + 0.06
+
+
 def test_new_run_guide_only_uses_guide_stem_and_empty_repo(tmp_path: Path):
     """Repo made optional: new_run(None) with a -s guide yields an empty
     manifest.repo_url and a run-id slugged from the guide's filename."""
@@ -187,3 +253,178 @@ def test_dry_run_stops_after_ingest(tmp_path: Path, monkeypatch):
         assert manifest.stages[s].status == "skipped"
         assert manifest.stages[s].meta.get("reason") == "dry-run stop"
     assert manifest.verified is False
+
+
+def test_badge_written_even_when_tutorial_llm_fails(tmp_path: Path, monkeypatch):
+    # badge.json is written before run_tutorial: a TutorialError from the LLM
+    # polish pass must not be able to suppress the badge (issue #139) — an
+    # unverified run always gets a loud red badge, never a missing file.
+    import json
+
+    from readme2demo import tutorial as tutorial_mod
+    from readme2demo.tutorial import TutorialError
+    from readme2demo.types import AgentResult, CommandLog, TutorialOutline, TutorialStep
+
+    cfg = Config(runs_dir=tmp_path)
+    orch = Orchestrator.new_run("https://github.com/x/y", cfg)
+    (orch.run_dir / "plan.json").write_text(make_plan().model_dump_json())
+    (orch.run_dir / "command_log.json").write_text(
+        CommandLog(engine="claude-code", result=AgentResult(outcome="success"))
+        .model_dump_json()
+    )
+    (orch.run_dir / "tutorial_outline.json").write_text(
+        TutorialOutline(
+            title="T", intro="i",
+            steps=[TutorialStep(title="s", command="c", explanation="e")],
+        ).model_dump_json()
+    )
+
+    def boom(*args, **kwargs):
+        raise TutorialError("polish call failed")
+
+    monkeypatch.setattr(tutorial_mod, "run_tutorial", boom)
+    with pytest.raises(TutorialError):
+        orch._stage_tutorial()
+    doc = json.loads((orch.run_dir / "badge.json").read_text())
+    assert doc["message"] == "unverified"
+    assert doc["color"] == "red"
+
+
+# -- summarize_markdown (#140) -------------------------------------------------
+# Pure renderer for `report --markdown` / $GITHUB_STEP_SUMMARY: no filesystem,
+# no LLM — the CLI pre-computes the artifact list via existence checks.
+
+
+def make_report_manifest(**overrides) -> Manifest:
+    data = {
+        "run_id": "glow-20260710-162012-33fc72",
+        "repo_url": "https://github.com/charmbracelet/glow",
+        "commit_sha": "a531d7c9deadbeef",
+        "engine": "claude-code",
+        "verified": True,
+        "total_cost_usd": 0.1234,
+        "stages": {
+            "ingest": {"status": "completed", "cost_usd": 0.0021},
+            "agent": {"status": "completed", "cost_usd": 0.098},
+            "verify": {"status": "completed"},
+        },
+        **overrides,
+    }
+    return Manifest.model_validate(data)
+
+
+def test_summarize_markdown_verified_run_full_shape():
+    md = summarize_markdown(make_report_manifest(), ["tutorial.md", "demo.mp4"])
+    lines = md.splitlines()
+    assert lines[0] == "## readme2demo — glow-20260710-162012-33fc72"
+    # Badge line: verified verdict, repo @ 7-char commit, engine, total cost.
+    badge = md.splitlines()[2]
+    assert "**Verified: yes**" in badge
+    assert "`https://github.com/charmbracelet/glow` @ `a531d7c`" in badge
+    assert "engine `claude-code`" in badge
+    assert "total cost $0.1234" in badge
+    # Stages table: header + one row per recorded stage, with per-stage cost.
+    assert "| Stage | Status | Cost (USD) | Notes |" in lines
+    assert "| ingest | completed | 0.0021 |  |" in lines
+    assert "| agent | completed | 0.0980 |  |" in lines
+    assert "| verify | completed | 0.0000 |  |" in lines
+    # Artifact list renders exactly what the caller passed.
+    assert "**Artifacts**" in lines
+    assert "- tutorial.md" in lines
+    assert "- demo.mp4" in lines
+
+
+def test_summarize_markdown_unverified_badge_is_loud():
+    md = summarize_markdown(make_report_manifest(verified=False), [])
+    assert "**Verified: NO**" in md
+    assert "Verified: yes" not in md
+
+
+def test_summarize_markdown_guide_only_run():
+    # repo_url == "" must not render an empty ``@ `?``` fragment.
+    md = summarize_markdown(
+        make_report_manifest(repo_url="", commit_sha=None), []
+    )
+    assert "(guide-only run — no repository)" in md
+    assert "@ `?`" not in md
+
+
+def test_summarize_markdown_failed_stage_error_in_notes():
+    m = make_report_manifest(
+        verified=False,
+        stages={"agent": {"status": "failed", "error": "exit 127: no engine"}},
+    )
+    md = summarize_markdown(m, [])
+    assert "| agent | failed | 0.0000 | exit 127: no engine |" in md.splitlines()
+
+
+def test_summarize_markdown_skip_reason_in_notes():
+    m = make_report_manifest(
+        stages={"render": {"status": "skipped", "meta": {"reason": "dry-run stop"}}},
+    )
+    md = summarize_markdown(m, [])
+    assert "| render | skipped | 0.0000 | dry-run stop |" in md.splitlines()
+
+
+def test_summarize_markdown_escapes_table_breaking_error_text():
+    # Stage errors carry arbitrary shell output: pipes would split the cell,
+    # newlines would end the row, and [brackets] must survive verbatim
+    # (the Rich-markup cousin of the summarize regression).
+    m = make_report_manifest(
+        verified=False,
+        stages={
+            "agent": {
+                "status": "failed",
+                "error": "cmd | head failed\nsee [openai] extra\r\nline3",
+            }
+        },
+    )
+    md = summarize_markdown(m, [])
+    rows = [ln for ln in md.splitlines() if ln.startswith("| agent |")]
+    assert len(rows) == 1  # newlines collapsed — still one table row
+    assert "\\|" in rows[0]  # pipe escaped, cell not split
+    assert "[openai]" in rows[0]  # brackets survive verbatim
+    assert rows[0].count(" | ") == 3  # exactly 4 cells
+
+
+def test_summarize_markdown_no_artifacts_omits_section():
+    md = summarize_markdown(make_report_manifest(verified=False, stages={}), [])
+    assert "**Artifacts**" not in md
+
+
+def test_budget_exceeded_message_mentions_flag(tmp_path: Path, monkeypatch):
+    """Regression: budget stop names config remedy that works with resume."""
+    from readme2demo import normalize as normalize_mod
+    from readme2demo.types import AgentResult, CommandLog
+
+    cfg = Config(runs_dir=tmp_path, budget_usd=5.0)
+    orch = Orchestrator.new_run("https://github.com/x/y", cfg)
+
+    def fake_ingest(repo_url, run_dir, model, **kwargs):
+        plan = make_plan()
+        (run_dir / "plan.json").write_text(plan.model_dump_json())
+        return plan, "abc1234", 0.005
+
+    def fake_run_agent(run_dir, plan, engine, c):
+        (run_dir / "transcript.ndjson").write_text("")
+        return run_dir / "transcript.ndjson"
+
+    def fake_normalize(path, engine, run_dir):
+        log = CommandLog(
+            engine="claude-code",
+            result=AgentResult(outcome="success", cost_usd=6.0),
+        )
+        (run_dir / "command_log.json").write_text(log.model_dump_json())
+        return log
+
+    monkeypatch.setattr(ingest_mod, "ingest", fake_ingest)
+    monkeypatch.setattr("readme2demo.orchestrator.run_agent", fake_run_agent)
+    monkeypatch.setattr(normalize_mod, "normalize", fake_normalize)
+
+    with pytest.raises(PipelineError, match="budget_usd") as excinfo:
+        orch.run()
+    msg = str(excinfo.value)
+    assert "resume" in msg.lower()
+    assert "readme2demo.toml" in msg
+    # --budget-usd is only for a *fresh* run, not resume
+    assert "fresh run" in msg

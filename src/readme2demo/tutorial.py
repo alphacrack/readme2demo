@@ -21,6 +21,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
 from . import llm
+from .manifest import Manifest
 from .types import CommandLog, Plan, TutorialOutline
 
 #: Maximum characters of captured output quoted per step / error block.
@@ -170,7 +171,7 @@ def seo_title(repo_url: str, fallback: str, suffix: str = "verified tutorial") -
 
 def seo_description(intro: str, max_len: int = 160) -> str:
     """First sentence of the intro, clamped to meta-description length."""
-    first = intro.split(". ")[0].strip().replace('"', "'")
+    first = " ".join(intro.split(". ")[0].split()).replace('"', "'")
     if not first.endswith("."):
         first += "."
     suffix = " Every command verified in a clean container."
@@ -270,6 +271,48 @@ def write_howto_jsonld(
     doc = {k: v for k, v in doc.items() if v is not None}
     path = run_dir / "howto.jsonld"
     path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    return path
+
+
+def render_badge(manifest: Manifest) -> dict:
+    """Render the shields.io endpoint-badge document for a run.
+
+    Pure: reads only ``manifest`` fields — no I/O, no LLM. The verdict
+    derives from ``manifest.verified`` ALONE (the flag only the verify
+    stage's clean replay sets), never from agent transcripts or prose: the
+    grounding invariant, in code. The date is taken from the verify stage's
+    ``finished_at`` (the timestamp of the replay verdict — deterministic, and
+    stable when a run is resumed days later), falling back to today's UTC
+    date only when that field is unset.
+    """
+    doc: dict = {"schemaVersion": 1, "label": "readme2demo"}
+    if manifest.verified:
+        verify = manifest.stages.get("verify")
+        stamp = verify.finished_at if verify else None
+        date = (
+            stamp.split("T")[0]
+            if stamp
+            else datetime.now(timezone.utc).date().isoformat()
+        )
+        doc["message"] = f"verified {date}"
+        doc["color"] = "green"
+    else:
+        doc["message"] = "unverified"
+        doc["color"] = "red"
+    if manifest.commit_sha:
+        # Provenance extra; shields.io ignores unknown keys.
+        doc["commit"] = manifest.commit_sha[:7]
+    return doc
+
+
+def write_badge_json(run_dir: Path, manifest: Manifest) -> Path:
+    """Write ``badge.json`` — the shields.io endpoint badge — into the run dir.
+
+    Always written: an unverified run gets a loud red badge, never a missing
+    file.
+    """
+    path = run_dir / "badge.json"
+    path.write_text(json.dumps(render_badge(manifest), indent=2), encoding="utf-8")
     return path
 
 

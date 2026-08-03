@@ -5,6 +5,115 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] — 2026-07-24
+
+### Fixed
+- Verify no longer fails when the success command is a non-idempotent
+  scaffolder (`X init` / `create-next-app` / `terraform init`): the command
+  ran as both the last setup step and the assertion, so the assertion's
+  re-run failed on the state setup created. It now runs exactly once, in the
+  assertion, against a clean state — grounding unchanged (#224, closes #222).
+
+### Changed
+- `CITATION.cff` credits the current 15 contributors instead of a placeholder
+  author (#226, closes #225).
+
+## [0.7.3] — 2026-07-23
+
+### Fixed
+- A stage that pays for LLM calls and then fails is now billed for that
+  spend: `stage_fail` accumulates `cost_usd` like `stage_complete`, and
+  `DistillError` carries the distiller's grounding-retry cost across the
+  raise. Previously a failed distill — the one run you most want a spend
+  figure for — reported $0.00 (#209, closes #103).
+
+### Changed
+- Docs: `howto.jsonld` added to the README's generated-outputs list and
+  `llm_backend` to its config example (#119, thanks @BenjaminAyivoh1);
+  the architecture diagram, module map, and the debug-run skill now show
+  the real verify → tutorial → render stage order (#211, thanks
+  @professor314).
+
+## [0.7.2] — 2026-07-21
+
+### Fixed
+- `extract_json` no longer truncates JSON whose string values contain `}` —
+  the brace counter is replaced with `raw_decode`, so plan commands like
+  `awk '{...}'` parse correctly (#146, closes #49, thanks @Sanjays2402).
+- Unknown TOML configuration keys fail fast with a concise CLI error
+  instead of being silently ignored; the retired `vhs_image` key is
+  accepted as a deprecated, warned, ignored compatibility field (#174,
+  closes #84, thanks @cen-zp).
+- SEO descriptions collapse embedded whitespace, keeping generated YAML
+  front matter single-line (#125, closes #91, thanks @pollychen-lab).
+- The README contributors section pointed at a fork — badge, graph link,
+  and avatar mosaic now show this repository's contributors, on GitHub
+  and PyPI (#180, closes #179, thanks @BenjaminAyivoh1).
+
+### Changed
+- CI: bump `actions/upload-artifact` to 7 in release.yml, aligning with
+  the pin the composite action already ships (#177).
+
+## [0.7.1] — 2026-07-19
+
+readme2demo is on PyPI: `pip install readme2demo`.
+
+### Added
+- The release workflow publishes to PyPI on every tag via Trusted
+  Publishing (OIDC) — no tokens or stored secrets anywhere (#176,
+  closes #175).
+
+### Fixed
+- README renders correctly on the PyPI project page: all 14 relative
+  links/images converted to absolute URLs, and the dead
+  `IMPLEMENTATION_PLAN.md` link (file removed in v0.6.0) repointed to
+  `architecture/README.md` (#176).
+
+## [0.7.0] — 2026-07-19
+
+The GitHub Action release: readme2demo can now sit in CI and turn "the
+README quietly broke" into a red X. Runnable walkthrough of everything
+below: docs/whats-new-0.7.0.md.
+
+### Added
+- **GitHub Action** (#157): a repo-root composite action — install, build the
+  sandbox image, run the pipeline, fail the check when the fresh-container
+  replay doesn't pass. Artifacts and a job summary included; url mode until
+  local-path ingestion (#74) unlocks PR-head verification. Self-test via
+  workflow_dispatch.
+- `report` exit codes signal the verdict (#158): 0 verified, 1 completed but
+  unverified, 2 stage failed — CI can gate on the exit code alone.
+- `report --markdown` (#159): a GitHub-flavored job summary (verified badge
+  line, stage table with per-stage cost, artifact list) for
+  $GITHUB_STEP_SUMMARY.
+- Every run mints `badge.json` (#156): a shields.io endpoint file, written
+  before the tutorial LLM pass so nothing can suppress an unverified run's
+  red badge. Hosting tracked in #63.
+
+### Fixed
+- The suite is portable on Windows: the POSIX executable-bit test skips on
+  NTFS (assertions untouched on POSIX) and artifact reads pin UTF-8 instead
+  of trusting the locale (#154, thanks @innovationty).
+- A docker-socket test reached the real `docker run` probe and stalled the
+  suite 60s per run whenever Docker Desktop was half-up; the probe is now
+  monkeypatched and the suite stays under a second (#155).
+
+## [0.6.4] — 2026-07-18
+
+Internal quality release: no user-facing behavior changes.
+
+### Added
+- Trust-boundary test suite (#151): 70 tests covering the modules that are
+  the security/verification story. Every sandbox hardening flag now has a
+  named test — the "never weaken hardening flags" rule is executable — and
+  the clean-room replay is pinned as the only source of "verified"
+  (fresh sandbox per attempt, no agent state, marker + exit code both
+  required, no marker leakage across attempts).
+- CI: coverage ratchet at 80% (measured floor) on the 3.12 leg and a mypy
+  type-check job gating at zero errors (#152). The handful of src touches
+  required are annotation-only or provably behavior-identical; grounding
+  paths audited.
+
 ## [0.6.3] — 2026-07-17
 
 ### Fixed

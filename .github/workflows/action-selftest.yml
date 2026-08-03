@@ -1,0 +1,35 @@
+# Manual self-test for the composite action (#148): runs the repo-root
+# action.yml against this repo's own URL (repo-url is left to its default,
+# which resolves to the repository running the workflow — so this also
+# exercises the default wiring). workflow_dispatch keeps API spend under
+# manual control; requires the ANTHROPIC_API_KEY repo secret.
+name: action-selftest
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run the action against this repo
+        id: r2d
+        uses: ./
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          skip-video: "true"
+
+      - name: Show action outputs
+        if: always()
+        env:
+          VERIFIED: ${{ steps.r2d.outputs.verified }}
+          RUN_DIR: ${{ steps.r2d.outputs.run-dir }}
+        run: |
+          echo "verified=$VERIFIED"
+          echo "run-dir=$RUN_DIR"

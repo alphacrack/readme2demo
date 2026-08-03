@@ -11,6 +11,27 @@ from readme2demo.engines.claude_code import ClaudeCodeEngine
 from readme2demo.llm import LLMError
 
 
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (
+            'Before {"description": "use } to close the block", "cmd": "echo hi"}',
+            {"description": "use } to close the block", "cmd": "echo hi"},
+        ),
+        (
+            'Before {"description": "say \\\"hello\\\"", "cmd": "echo hi"}',
+            {"description": 'say "hello"', "cmd": "echo hi"},
+        ),
+        (
+            'Before {"description": "done", "cmd": "echo hi"} after',
+            {"description": "done", "cmd": "echo hi"},
+        ),
+    ],
+)
+def test_extract_json_handles_braces_escapes_and_trailing_prose(response, expected):
+    assert json.loads(llm.extract_json(response)) == expected
+
+
 @pytest.fixture(autouse=True)
 def reset_backend():
     llm.set_backend("auto")
@@ -536,7 +557,7 @@ def test_cli_backend_error_envelope(monkeypatch):
             cmd, 0, stdout=_fake_cli_envelope("rate limited", is_error=True), stderr=""
         ),
     )
-    with pytest.raises(LLMError, match="reported an error"):
+    with pytest.raises(LLMError, match=r"reported an error.*--llm-backend api"):
         llm._complete_cli("s", "u", "m")
 
 
@@ -546,7 +567,7 @@ def test_cli_backend_nonzero_exit(monkeypatch):
         "readme2demo.llm.subprocess.run",
         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom"),
     )
-    with pytest.raises(LLMError, match="failed"):
+    with pytest.raises(LLMError, match=r"failed.*--llm-backend api"):
         llm._complete_cli("s", "u", "m")
 
 
@@ -847,6 +868,15 @@ def test_docker_socket_mounted_when_enabled(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(agent_mod, "Sandbox", FakeSandbox)
+    # Regression: run_agent's socket branch calls sandbox.docker_socket_gid,
+    # which shells out to a real `docker run` probe (timeout=60). With Docker
+    # Desktop half-up the probe blocks the full 60s and the suite stalled a
+    # minute per run; with the daemon cleanly down it failed fast, which is
+    # why this leak went unnoticed. agent.py imports the probe from the
+    # sandbox module at call time, so patch it there.
+    monkeypatch.setattr(
+        "readme2demo.sandbox.docker_socket_gid", lambda image: "999"
+    )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     (tmp_path / "repo").mkdir()
     plan = Plan(quickstart_summary="q", success_criteria=SuccessCriteria(command="x"))
@@ -863,6 +893,7 @@ def test_docker_socket_mounted_when_enabled(tmp_path, monkeypatch):
             src == "/var/run/docker.sock" for src, _, _ in captured["mounts"]
         )
         assert has_socket is expected
+        assert captured["group_add"] == ("999" if enabled else None)
 
 
 def test_render_cmd_includes_socket_when_enabled(tmp_path, monkeypatch):
@@ -950,3 +981,40 @@ def test_render_socket_includes_group_add(tmp_path, monkeypatch):
     render_mod.run_render(tmp_path, Config(allow_docker_socket=True))
     assert "--group-add" in captured["cmd"]
     assert "999" in captured["cmd"]
+
+
+def test_cli_timeout_error_includes_next_step_hint(monkeypatch):
+    """Regression: claude -p failures should hint login AND --llm-backend api."""
+    import subprocess
+    from readme2demo import llm as llm_mod
+
+    def boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd=["claude", "-p"], timeout=1)
+
+    monkeypatch.setattr(llm_mod.shutil, "which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr(llm_mod.subprocess, "run", boom)
+    with pytest.raises(
+        llm_mod.LLMError,
+        match=r"timed out.*claude -p hello.*--llm-backend api",
+    ):
+        llm_mod._complete_cli("sys", "user", "")
+
+
+def test_cli_nonjson_error_includes_next_step_hint(monkeypatch):
+    """Regression: non-JSON claude -p output carries the same next-step hint."""
+    import subprocess
+    from readme2demo import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod.shutil, "which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr(
+        llm_mod.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            ["claude"], 0, stdout="not-json{", stderr=""
+        ),
+    )
+    with pytest.raises(
+        llm_mod.LLMError,
+        match=r"non-JSON.*--llm-backend api",
+    ):
+        llm_mod._complete_cli("sys", "user", "")

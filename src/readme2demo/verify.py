@@ -33,9 +33,10 @@ def run_verify(run_dir: Path, plan: Plan, cfg: Config) -> VerifyReport:
 
     Combined output streams to ``run_dir/verify.log`` (truncated at the start
     of each verify run). Pass = exit code 0 AND ``R2D_VERIFY_OK`` in the
-    attempt's log output. On failure, the script is retried once in a NEW
-    fresh sandbox (network flakiness happens) when ``cfg.verify_retries >= 1``;
-    both attempts are recorded under ``===== ATTEMPT n =====`` separators.
+    attempt's log output. On failure, the script is retried in a NEW fresh
+    sandbox (network flakiness happens) up to ``cfg.verify_retries`` times
+    (so ``verify_retries=1`` means one retry, i.e. two attempts total); every
+    attempt is recorded under ``===== ATTEMPT n =====`` separators.
     Sandboxes are always destroyed, pass or fail.
     """
     script = run_dir / "commands.sh"
@@ -49,7 +50,7 @@ def run_verify(run_dir: Path, plan: Plan, cfg: Config) -> VerifyReport:
         header += f" =~ /{criteria.expected_pattern}/"
     log_path.write_text(header + "\n", encoding="utf-8")
 
-    total_attempts = 2 if cfg.verify_retries >= 1 else 1
+    total_attempts = 1 + max(0, cfg.verify_retries)
     attempt = 0
     exit_code: int | None = None
     criteria_matched: bool | None = None

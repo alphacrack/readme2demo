@@ -17,15 +17,22 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 import json
-from typing import Optional
+from difflib import get_close_matches
+from typing import Any, Optional
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.markup import escape
 
 from readme2demo.config import Config
 from readme2demo.manifest import STAGES, Manifest
-from readme2demo.orchestrator import Orchestrator, PipelineError, summarize
+from readme2demo.orchestrator import (
+    Orchestrator,
+    PipelineError,
+    summarize,
+    summarize_markdown,
+)
 from readme2demo import __version__ as version
 
 
@@ -113,8 +120,8 @@ def _build_config(
     base_image: Optional[str],
     llm_backend: Optional[str] = None,
 ) -> Config:
-    return Config.load(
-        toml_path=config_file,
+    return _load_config(
+        config_file,
         engine=engine,
         model=model,
         runs_dir=output_dir,
@@ -125,6 +132,43 @@ def _build_config(
         base_image=base_image,
         llm_backend=llm_backend,
     )
+
+
+def _load_config(config_file: Optional[Path], **overrides: Any) -> Config:
+    try:
+        return Config.load(toml_path=config_file, **overrides)
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        location = ".".join(str(part) for part in error["loc"])
+        source = config_file or Path("readme2demo.toml")
+        if error["type"] == "extra_forbidden":
+            # Exclude deprecated no-op shims (e.g. vhs_image) from suggestions.
+            valid_keys = sorted(
+                k for k, f in Config.model_fields.items() if not f.exclude
+            )
+            suggestion = get_close_matches(location, valid_keys, n=1, cutoff=0.6)
+            hint = (
+                f" Did you mean '{escape(suggestion[0])}'?"
+                if suggestion
+                else f" Valid keys: {escape(', '.join(valid_keys))}."
+            )
+            console.print(
+                f"[red]Unknown config key '{escape(location)}' in "
+                f"{escape(str(source))}.{hint}[/]"
+            )
+        else:
+            bad_input = error.get("input", None)
+            value_bit = (
+                f" (got {escape(repr(bad_input)[:120])})"
+                if bad_input is not None
+                else ""
+            )
+            key_bit = f" for '{escape(location)}'" if location else ""
+            console.print(
+                f"[red]Invalid configuration in {escape(str(source))}{key_bit}: "
+                f"{escape(error['msg'])}{value_bit}.[/]"
+            )
+        raise typer.Exit(2) from None
 
 
 def _resolve_repo(
@@ -279,7 +323,7 @@ def run(
     ),
     engine: Optional[str] = typer.Option(None, help="Agent engine: claude-code | openhands"),
     model: Optional[str] = typer.Option(None, help="Model for planner/distiller/tutorial passes"),
-    output_dir: Optional[Path] = typer.Option(None, "--output-dir", help="Runs directory"),
+    output_dir: Optional[Path] = typer.Option(None, "-o", "--output-dir", help="Runs directory"),
     timeout: Optional[int] = typer.Option(None, help="Agent wall-clock timeout (s)"),
     budget_usd: Optional[float] = typer.Option(None, help="Abort if agent cost exceeds this"),
     max_turns: Optional[int] = typer.Option(None, help="Agent max turns"),
@@ -425,7 +469,7 @@ def resume(
         )
         raise typer.Exit(2)
     preset = _select_preset(gemini, openai, anthropic)
-    cfg = Config.load(toml_path=config_file, llm_backend=llm_backend)
+    cfg = _load_config(config_file, llm_backend=llm_backend)
     if preset is not None:
         provider, preset_model = preset
         # Precedence: --<provider> <model> > config model (CLI beats toml) >
@@ -450,13 +494,64 @@ def resume(
     _drive(orch)
 
 
+# Artifact filenames the pipeline writes to the run-dir root, in pipeline
+# order. `report --markdown` lists whichever of these exist — existence checks
+# only, so the summary keeps working on partial and failed runs.
+REPORT_ARTIFACTS = (
+    "commands.sh",
+    "demo.tape",
+    "step_by_step.md",
+    "tutorial.md",
+    "troubleshooting.md",
+    "howto.jsonld",
+    "demo.mp4",
+    "demo.gif",
+)
+
+
+def _report_exit_code(manifest: Manifest) -> int:
+    """Exit code for ``report``, mirroring ``_drive``'s outcome handling.
+
+    2 — a stage failed (the run itself broke);
+    1 — no stage failed, but the fresh-container replay did not pass
+        (completed UNVERIFIED);
+    0 — verified.
+
+    A failed stage outranks ``verified`` so a stale verdict from an earlier
+    pass can never mask a later failure.
+    """
+    if any(rec.status == "failed" for rec in manifest.stages.values()):
+        return 2
+    return 0 if manifest.verified else 1
+
+
 @app.command()
 def report(
     run_dir: Path = typer.Argument(..., help="Path to a runs/<run-id> directory"),
     json_output: bool = typer.Option(False, "--json", help="Emit summary as JSON"),
+    markdown_output: bool = typer.Option(
+        False,
+        "--markdown",
+        help="Emit summary as GitHub-flavored Markdown "
+        "(pipe into $GITHUB_STEP_SUMMARY)",
+    ),
 ) -> None:
-    """Print a summary of a run: stage statuses, verification, cost."""
+    """Print a summary of a run: stage statuses, verification, cost.
+
+    Exit codes signal the run's state so CI can gate on this command:
+    0 = verified, 1 = completed but UNVERIFIED, 2 = a stage failed.
+    """
+    if json_output and markdown_output:
+        raise typer.BadParameter("--json and --markdown are mutually exclusive")
     manifest = Manifest.load(run_dir)
+    if markdown_output:
+        # The renderer is pure; the CLI owns the filesystem side. Existence
+        # checks only — never parse other run files, so partial runs report.
+        artifacts = [n for n in REPORT_ARTIFACTS if (run_dir / n).exists()]
+        # plain print(), like --json: console.print wraps at terminal width
+        # and would mangle tables piped into $GITHUB_STEP_SUMMARY.
+        print(summarize_markdown(manifest, artifacts))
+        raise typer.Exit(_report_exit_code(manifest))
     if json_output:
         output_data = {
             "stages": [
@@ -468,9 +563,10 @@ def report(
             "commit": manifest.commit_sha,
         }
         print(json.dumps(output_data, indent=2))
-        raise typer.Exit(0)
+        raise typer.Exit(_report_exit_code(manifest))
     # escape(): stage errors may contain [bracketed] text Rich would swallow.
     console.print(escape(summarize(manifest)))
+    raise typer.Exit(_report_exit_code(manifest))
 
 
 def _preflight(cfg: Config) -> None:
@@ -506,18 +602,24 @@ def _preflight(cfg: Config) -> None:
     except LLMError as e:
         problems.append(str(e))
 
-    # Agent engine auth (forwarded into the sandbox) + sandbox image probe:
-    # an image without the engine's runtime dies mid-run with a bare exit 127
-    # and no transcript, so it must be caught here, before agent time is spent.
-    try:
-        engine = get_engine(cfg.engine)
-        engine.resolve_env()
-        engine.check_image(cfg.base_image)
-    except EngineError as e:
-        problems.append(str(e))
+    # Agent engine auth (forwarded into the sandbox), sandbox image probe, and
+    # the Docker CLI are only exercised once the agent stage runs. A --dry-run
+    # stops after ingest/planning (never starts a sandbox, never touches
+    # Docker), so requiring them there would defeat the feature — its whole
+    # point is a cheap feasibility check before you commit a credential and a
+    # Docker environment. A real run still preflights all three.
+    if not cfg.dry_run:
+        try:
+            engine = get_engine(cfg.engine)
+            engine.resolve_env()
+            engine.check_image(cfg.base_image)
+        except EngineError as e:
+            problems.append(str(e))
 
-    if shutil.which("docker") is None:
-        problems.append("docker CLI not found on PATH — install Docker Desktop and retry.")
+        if shutil.which("docker") is None:
+            problems.append(
+                "docker CLI not found on PATH — install Docker Desktop and retry."
+            )
 
     if problems:
         for p in problems:
@@ -537,6 +639,9 @@ def _drive(orch: Orchestrator) -> None:
     except PipelineError as e:
         console.print(f"[red]Pipeline stopped:[/] {escape(str(e))}")
         console.print(escape(summarize(orch.manifest)))
+        console.print(
+            f"[dim]Fix the cause, then: readme2demo resume {escape(str(orch.run_dir))}[/]"
+        )
         raise typer.Exit(1)
     except Exception as e:  # noqa: BLE001 — stage errors are already in the manifest
         console.print(f"[red]{type(e).__name__}:[/] {escape(str(e))}")
@@ -558,6 +663,10 @@ def _drive(orch: Orchestrator) -> None:
         console.print(
             f"\n[bold yellow]⚠ Completed UNVERIFIED.[/] "
             f"See {escape(str(orch.run_dir))}/verify.log"
+        )
+        console.print(
+            f"[dim]Retry after fixes: readme2demo resume "
+            f"{escape(str(orch.run_dir))} --from-stage distill[/]"
         )
 
 

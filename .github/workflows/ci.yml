@@ -19,6 +19,17 @@ jobs:
       - name: ruff (correctness lint)
         run: ruff check src/ tests/
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]" mypy
+      - name: mypy (type check)
+        run: mypy src/readme2demo
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -31,4 +42,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
-      - run: python -m pytest tests/ -q
+      # Coverage ratchet on one leg only (the others stay fast/plain).
+      # 80 = floor(measured 81%) - 1: the gate passes today and catches
+      # regressions; raise it as coverage grows, never lower it. (#58)
+      - name: pytest (with coverage gate)
+        if: matrix.python-version == '3.12'
+        run: python -m pytest tests/ -q --cov=readme2demo --cov-report=term --cov-fail-under=80
+      - name: pytest
+        if: matrix.python-version != '3.12'
+        run: python -m pytest tests/ -q
