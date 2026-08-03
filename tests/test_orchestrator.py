@@ -10,7 +10,12 @@ import pytest
 from readme2demo import ingest as ingest_mod
 from readme2demo.config import Config
 from readme2demo.manifest import STAGES, Manifest, StageRecord, stage_duration
-from readme2demo.orchestrator import Orchestrator, PipelineError, summarize_markdown
+from readme2demo.orchestrator import (
+    Orchestrator,
+    PipelineError,
+    summarize,
+    summarize_markdown,
+)
 from readme2demo.types import Plan, SuccessCriteria
 
 
@@ -107,6 +112,7 @@ def test_manifest_skip_counts_as_done(tmp_path: Path):
         (StageRecord(finished_at="2026-07-21T12:01:25+00:00"), None),
         (StageRecord(started_at="2026-07-21T12:00:00+00:00"), None),
         (StageRecord(started_at="not-a-date", finished_at="2026-07-21T12:01:25+00:00"), None),
+        (StageRecord(started_at="2026-07-21T12:00:00", finished_at="2026-07-21T12:00:05+00:00"), None),
         (StageRecord(started_at="2026-07-21T12:01:25+00:00", finished_at="2026-07-21T12:00:00+00:00"), None),
     ],
 )
@@ -348,6 +354,31 @@ def make_report_manifest(**overrides) -> Manifest:
         **overrides,
     }
     return Manifest.model_validate(data)
+
+
+def test_summarize_human_report_includes_duration_and_unknown_placeholder():
+    """Regression: the human report must keep the duration column visible."""
+    manifest = make_report_manifest(
+        stages={
+            "agent": {
+                "status": "completed",
+                "started_at": "2026-07-21T12:00:00+00:00",
+                "finished_at": "2026-07-21T12:01:25+00:00",
+            },
+            "ingest": {
+                "status": "completed",
+                "started_at": "2026-07-21T12:00:00+00:00",
+                "finished_at": "2026-07-21T12:00:00.500000+00:00",
+            },
+            "verify": {"status": "completed"},
+        }
+    )
+
+    report = summarize(manifest)
+
+    assert "agent      completed    1m 25s" in report
+    assert "ingest     completed       <1s" in report
+    assert "verify     completed         —" in report
 
 
 def test_summarize_markdown_verified_run_full_shape():

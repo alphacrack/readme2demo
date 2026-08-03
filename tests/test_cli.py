@@ -643,7 +643,7 @@ def test_report_markdown_emits_gfm_summary_with_present_artifacts(tmp_path):
             "ingest": {
                 "status": "completed", "cost_usd": 0.0021,
                 "started_at": "2026-07-21T12:00:00+00:00",
-                "finished_at": "2026-07-21T12:00:02.5+00:00",
+                "finished_at": "2026-07-21T12:00:02+00:00",
             },
             "verify": {"status": "completed"},
         },

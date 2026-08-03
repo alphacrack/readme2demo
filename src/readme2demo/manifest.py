@@ -52,7 +52,7 @@ def stage_duration(record: StageRecord) -> Optional[float]:
             datetime.fromisoformat(record.finished_at)
             - datetime.fromisoformat(record.started_at)
         ).total_seconds()
-    except ValueError:
+    except (TypeError, ValueError):
         return None
     return seconds if seconds >= 0 else None
 
