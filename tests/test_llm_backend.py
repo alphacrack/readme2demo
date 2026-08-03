@@ -675,8 +675,7 @@ def test_placeholder_credential_unknown_var_is_generic_not_error():
     passes the format gate — total function, safe-by-default, never raises."""
     generic = placeholder_credential("SOME_UNKNOWN_VAR")
     assert _CREDENTIAL_RE.fullmatch(generic)
-    assert set(generic) <= set("r2d-placeholder-x") | {"-"}  # all-x body
-    assert "x" * 32 in generic
+    assert generic == "r2d-placeholder-" + "x" * 32
 
 
 def test_is_placeholder_credential_roundtrip():
@@ -688,6 +687,13 @@ def test_is_placeholder_credential_roundtrip():
     assert not is_placeholder_credential(REAL_OAUTH_FIXTURE)
     assert not is_placeholder_credential("sk-ant-oat01-abcdefghijklmnop")
     assert not is_placeholder_credential("not-a-credential")
+
+
+def test_placeholder_covers_every_claude_code_auth_var():
+    """Regression: #234 — a new AUTH_ENV_VARS entry must not silently fall
+    through to the generic, non sk-ant-shaped placeholder."""
+    for var in ClaudeCodeEngine.AUTH_ENV_VARS:
+        assert placeholder_credential(var).startswith("sk-ant-")
 
 
 # -- host claude -p env sanitation ------------------------------------------------
