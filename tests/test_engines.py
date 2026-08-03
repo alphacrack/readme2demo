@@ -79,18 +79,19 @@ def test_base_default_matches_names_case_insensitively():
 
 def test_credential_env_vars_has_no_consumer_yet():
     """Regression: credential_env_vars() is a purely additive seam (#235) —
-    wiring it into agent.py/sandbox.py is a different issue (#165). Pin that
-    nothing outside the engines themselves references it."""
+    wiring it into agent.py/sandbox.py is a different issue (#165). Pin the
+    exact set of files that mention it, so the guard fails both when a
+    consumer appears AND when the src layout moves out from under it (an
+    rglob over a missing directory yields nothing, silently)."""
     src = Path(__file__).resolve().parent.parent / "src" / "readme2demo"
     allowed = {
         src / "engines" / "base.py",
         src / "engines" / "claude_code.py",
         src / "engines" / "openhands.py",
     }
-    offenders = [
+    seen = [
         path
         for path in src.rglob("*.py")
         if "credential_env_vars" in path.read_text(encoding="utf-8")
-        and path not in allowed
     ]
-    assert offenders == []
+    assert set(seen) == allowed, seen
