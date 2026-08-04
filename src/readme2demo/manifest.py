@@ -78,6 +78,12 @@ class Manifest(BaseModel):
     # they get their own field instead of a StageRecord. Defaults to empty, so
     # manifests written before this field load unchanged.
     formats: dict[str, str] = Field(default_factory=dict)
+    # LLM spend a format builder incurred, name -> USD (#170: the promo cut pays
+    # for a grounded scene plan). A format is not a stage and has no StageRecord
+    # to carry cost_usd, so the money gets its own map — and it is summed into
+    # total_cost_usd exactly like a stage's, because a paid failure that reports
+    # $0.00 is the bug #103/#209 exist to prevent. Additive: old manifests load.
+    format_costs: dict[str, float] = Field(default_factory=dict)
 
     # -- persistence ---------------------------------------------------------
 
@@ -115,6 +121,20 @@ class Manifest(BaseModel):
 
     # -- stage transitions ---------------------------------------------------
 
+    def _recompute_total(self) -> None:
+        """Re-derive ``total_cost_usd`` from every source of spend in the run.
+
+        Stage records AND :attr:`format_costs`: the total is recomputed (never
+        incremented) on each transition, so a source left out of this sum is a
+        source of money that silently disappears the next time any stage
+        completes.
+        """
+        self.total_cost_usd = round(
+            sum(r.cost_usd for r in self.stages.values())
+            + sum(self.format_costs.values()),
+            6,
+        )
+
     def stage_start(self, name: str) -> None:
         rec = self.stages[name]
         rec.status = "running"
@@ -128,9 +148,7 @@ class Manifest(BaseModel):
         rec.finished_at = utcnow()
         rec.cost_usd += cost_usd
         rec.meta.update(meta)
-        self.total_cost_usd = round(
-            sum(r.cost_usd for r in self.stages.values()), 6
-        )
+        self._recompute_total()
         self.save()
 
     def stage_fail(self, name: str, error: str, cost_usd: float = 0.0, **meta) -> None:
@@ -147,9 +165,7 @@ class Manifest(BaseModel):
         rec.error = error
         rec.cost_usd += cost_usd
         rec.meta.update(meta)
-        self.total_cost_usd = round(
-            sum(r.cost_usd for r in self.stages.values()), 6
-        )
+        self._recompute_total()
         self.save()
 
     def stage_skip(self, name: str, reason: str = "") -> None:
@@ -169,6 +185,24 @@ class Manifest(BaseModel):
         format does not erase what an earlier pass recorded for the others.
         """
         self.formats.update(results)
+        self.save()
+
+    def record_format_cost(self, name: str, cost_usd: float) -> None:
+        """Account LLM spend a format builder incurred, and persist.
+
+        The format counterpart of :meth:`stage_complete` /
+        :meth:`stage_fail`'s ``cost_usd``, and it exists for the same reason:
+        the promo builder pays for a scene plan (and possibly a grounding
+        retry) BEFORE it can fail, so recording money only on the success path
+        would report $0.00 for a run that really spent it (#103/#209).
+
+        Accumulates rather than replaces — a format re-dispatched by a
+        ``resume`` pays again, exactly as a re-run stage does — and a builder
+        that spent nothing records a plain ``0.0`` rather than nothing at all,
+        so "cost not recorded" and "cost was zero" stay distinguishable.
+        """
+        self.format_costs[name] = round(self.format_costs.get(name, 0.0) + cost_usd, 6)
+        self._recompute_total()
         self.save()
 
     def next_stage(self) -> Optional[str]:

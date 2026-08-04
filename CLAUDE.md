@@ -36,7 +36,13 @@ requested `--formats` entry, gated on `manifest.verified` exactly as render is.
 Every builder call is wrapped and the four protected artifacts are fingerprinted
 around it, so a builder that raises, is unimplemented, or writes into the
 grounding path is recorded in `manifest.formats` as `skipped: <reason>` and
-never fails the run. Never make a format load-bearing.
+never fails the run. Never make a format load-bearing. `produce.build_promo`
+(#170, `--formats promo`) is the wired example: grounded scene plan
+(`promo_script.py`, one LLM call) → `promo_script.json` → deterministic ffmpeg
+compositor (`promo.py`) → `promo.mp4`. Two rules it exists to demonstrate — a
+format's LLM spend goes to `manifest.format_costs` on the FAILURE path too
+(#103/#209), and publication comes from `render_promo`'s return value, never
+from a file on disk (`None` deliberately leaves the refused cut as evidence).
 
 **Stage order matters:** tutorial runs BEFORE render. step_by_step.md is finalized (verified outputs, payoff step) first; the demo tape is then built from that published guide (`distill.build_tape_from_step_by_step`) so the video provably follows step_by_step.md.
 
