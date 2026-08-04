@@ -6,8 +6,12 @@ import subprocess
 import pytest
 
 from readme2demo import llm
-from readme2demo.engines.base import EngineError
-from readme2demo.engines.claude_code import ClaudeCodeEngine
+from readme2demo.engines.base import (
+    EngineError,
+    is_placeholder_credential,
+    placeholder_credential,
+)
+from readme2demo.engines.claude_code import _CREDENTIAL_RE, ClaudeCodeEngine
 from readme2demo.llm import LLMError
 
 
@@ -342,6 +346,27 @@ def test_anthropic_default_model_matches_config():
     assert llm.PROVIDERS["anthropic"].default_model == Config().model
 
 
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ('diagnostic {not json} ```json {"ok": true}```', {"ok": True}),
+        ('```json\n{"ok": true}\n```', {"ok": True}),
+        ('```\n{"ok": true}\n```', {"ok": True}),
+        ('diagnostic {"ok": true} trailing prose', {"ok": True}),
+        ('Setup:\n```bash\npip install x\n```\n{"feasible": true}', {"feasible": True}),
+        (
+            'Plan:\n```bash\npip install x\n```\n```json\n{"feasible": true}\n```',
+            {"feasible": True},
+        ),
+        ('Run ```pip install x``` first.\n{"feasible": true}', {"feasible": True}),
+        ('```json\n{"description": "literal } in string"}\n```', {"description": "literal } in string"}),
+    ],
+)
+def test_extract_json_handles_fenced_json_shapes(response, expected):
+    """Regression (#97): compact and adjacent fences must not trip on brace-bearing prose."""
+    assert json.loads(llm.extract_json(response)) == expected
+
+
 # -- openai backend -----------------------------------------------------------------
 
 
@@ -627,6 +652,69 @@ def test_engine_env_strips_valid_token(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", " sk-ant-oat01-abcdefghijkl \n")
     env = ClaudeCodeEngine().resolve_env()
     assert env == {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-abcdefghijkl"}
+
+
+# -- placeholder credentials (#234) --------------------------------------------------
+
+REAL_API_KEY_FIXTURE = "sk-ant-test-abcdefghijklmnop"
+REAL_OAUTH_FIXTURE = "sk-ant-oat01-abcdefghijklmnop"
+
+
+@pytest.mark.parametrize(
+    "var",
+    ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "SOME_UNKNOWN_VAR"],
+)
+def test_placeholder_credential_passes_repo_format_gate(var):
+    """Regression: #234 placeholder must satisfy the repo's one format gate —
+    asserted against the IMPORTED _CREDENTIAL_RE, never a hand-copied pattern."""
+    assert _CREDENTIAL_RE.fullmatch(placeholder_credential(var))
+
+
+def test_placeholder_credential_mirrors_real_public_shape():
+    """Regression: #234 prefix mirrors the real public shape (an in-sandbox CLI
+    may consume the placeholder; a missing sk-ant- prefix fails cryptically)."""
+    api = placeholder_credential("ANTHROPIC_API_KEY")
+    assert api.startswith("sk-ant-api03-")
+    assert set(api[len("sk-ant-api03-"):]) == {"x"}
+    oauth = placeholder_credential("CLAUDE_CODE_OAUTH_TOKEN")
+    assert oauth.startswith("sk-ant-oat01-")
+    assert set(oauth[len("sk-ant-oat01-"):]) == {"x"}
+
+
+def test_placeholder_credential_deterministic_and_not_real():
+    """Regression: #234 generator is pure/deterministic and never collides
+    with the real-shaped fixtures used by the resolve_env tests above."""
+    assert placeholder_credential("ANTHROPIC_API_KEY") == placeholder_credential(
+        "ANTHROPIC_API_KEY"
+    )
+    assert placeholder_credential("ANTHROPIC_API_KEY") != REAL_API_KEY_FIXTURE
+    assert placeholder_credential("CLAUDE_CODE_OAUTH_TOKEN") != REAL_OAUTH_FIXTURE
+
+
+def test_placeholder_credential_unknown_var_is_generic_not_error():
+    """Regression: #234 an unknown var returns a generic placeholder that still
+    passes the format gate — total function, safe-by-default, never raises."""
+    generic = placeholder_credential("SOME_UNKNOWN_VAR")
+    assert _CREDENTIAL_RE.fullmatch(generic)
+    assert generic == "r2d-placeholder-" + "x" * 32
+
+
+def test_is_placeholder_credential_roundtrip():
+    """Regression: #234 recognizer is the matched inverse — True for every
+    generator output, False for the real-shaped fixtures, both directions."""
+    for var in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "SOME_UNKNOWN_VAR"):
+        assert is_placeholder_credential(placeholder_credential(var))
+    assert not is_placeholder_credential(REAL_API_KEY_FIXTURE)
+    assert not is_placeholder_credential(REAL_OAUTH_FIXTURE)
+    assert not is_placeholder_credential("sk-ant-oat01-abcdefghijklmnop")
+    assert not is_placeholder_credential("not-a-credential")
+
+
+def test_placeholder_covers_every_claude_code_auth_var():
+    """Regression: #234 — a new AUTH_ENV_VARS entry must not silently fall
+    through to the generic, non sk-ant-shaped placeholder."""
+    for var in ClaudeCodeEngine.AUTH_ENV_VARS:
+        assert placeholder_credential(var).startswith("sk-ant-")
 
 
 # -- host claude -p env sanitation ------------------------------------------------
