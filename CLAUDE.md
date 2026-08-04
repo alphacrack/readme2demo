@@ -30,6 +30,14 @@ crash-safe `manifest.json`; every stage resumable via
 | tutorial | `tutorial.py` | polish call | finalizes step_by_step.md with verified outputs; `enforce_commands` restores commands/outputs regardless of LLM output |
 | render | `render.py` | none | tape derived FROM the FINAL step_by_step.md (video follows the guide); heredocs typed line-by-line; duration gate; image preflight |
 
+**Extra output formats are NOT stages.** `produce.py` (`produce()`, called from
+`orchestrator.run` right after the render stage) dispatches one builder per
+requested `--formats` entry, gated on `manifest.verified` exactly as render is.
+Every builder call is wrapped and the four protected artifacts are fingerprinted
+around it, so a builder that raises, is unimplemented, or writes into the
+grounding path is recorded in `manifest.formats` as `skipped: <reason>` and
+never fails the run. Never make a format load-bearing.
+
 **Stage order matters:** tutorial runs BEFORE render. step_by_step.md is finalized (verified outputs, payoff step) first; the demo tape is then built from that published guide (`distill.build_tape_from_step_by_step`) so the video provably follows step_by_step.md.
 
 Prompts live in `src/readme2demo/prompts/*.md`; jinja templates in
