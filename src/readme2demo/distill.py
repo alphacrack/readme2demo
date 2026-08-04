@@ -552,8 +552,10 @@ def step_timestamps(tape: list[TapeCommand], seed_worktree: bool) -> dict:
     per step is recorded precisely so a post-render consumer can measure the
     surplus (ffprobe duration − ``total_min_s``) and redistribute it across the
     waits — that correction is a follow-up (#114), not computed here. The
-    hidden preamble also consumes tape-clock time but records no frames, so the
-    video clock ≈ tape clock − hidden spans + waits.
+    hidden preamble also consumes tape-clock time but records no frames, so a
+    position in the rendered mp4 ≈ this tape clock − hidden spans + waits. Every
+    consumer must treat these numbers as tape-clock ESTIMATES and resolve exact
+    cut points against the real video.
 
     Args:
         tape: the FINAL tape written for the video (list of TapeCommand).
@@ -934,8 +936,10 @@ def build_tape_from_step_by_step(
     # aren't run in an empty directory.
     seed_worktree = not _tape_fetches_code(final_tape)
     write_tape(final_tape, run_dir, seed_worktree=seed_worktree)
-    # step_timestamps.json: per-step [start, end] offsets on the video clock,
-    # for YouTube chapter markers and the #114 promo cut's demo_segment source.
+    # step_timestamps.json: per-step [start, end] LOWER BOUNDS on the tape clock
+    # (see step_timestamps — Wait time and the hidden preamble are excluded, so
+    # these are estimates, not exact positions in the mp4), for YouTube chapter
+    # markers and the #114 promo cut's demo_segment source.
     # Derived metadata ONLY — computed from the SAME final_tape and seed flag
     # write_tape just rendered, so it can never describe steps the video omits.
     write_step_timestamps(final_tape, run_dir, seed_worktree=seed_worktree)
