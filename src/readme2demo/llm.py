@@ -476,9 +476,13 @@ def complete(system: str, user: str, model: str, max_tokens: int = 8192) -> LLMR
 
 def extract_json(text: str) -> str:
     """Pull the first JSON object out of a response (handles ```json fences)."""
-    fence = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL)
-    if fence:
-        return fence.group(1).strip()
+    for fence in re.finditer(r"```(?:json)?[ \t]*\r?\n?(.*?)```", text, re.DOTALL):
+        payload = fence.group(1).strip()
+        try:
+            json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        return payload
     start = text.find("{")
     if start == -1:
         raise LLMError(f"No JSON object found in response: {text[:200]!r}")

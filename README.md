@@ -152,6 +152,7 @@ llm_backend = "auto"        # auto | api | claude-cli | gemini | openai
 max_turns = 60
 budget_usd = 5.0
 base_image = "readme2demo/base:latest"
+formats = ["demo", "gif"]
 skip_video = false
 ```
 
