@@ -90,6 +90,7 @@ class TestStartHardeningArgv:
         assert _start_argv(docker) == [
             "docker", "run", "-d",
             "--name", "r2d-test",
+            "--label", "readme2demo=1",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--memory", "4g",
@@ -102,6 +103,9 @@ class TestStartHardeningArgv:
 
     def test_cap_drop_all(self, docker: _FakeDocker) -> None:
         assert _pair(_start_argv(docker), "--cap-drop") == "ALL"
+
+    def test_readme2demo_container_label(self, docker: _FakeDocker) -> None:
+        assert "readme2demo=1" in _pairs(_start_argv(docker), "--label")
 
     def test_security_opt_no_new_privileges(self, docker: _FakeDocker) -> None:
         assert _pair(_start_argv(docker), "--security-opt") == "no-new-privileges"
