@@ -69,6 +69,9 @@ class Config(BaseModel):
     verify_retries: int = 1
     distill_retries: int = 1  # distiller feedback loops on verify failure
     skip_video: bool = False
+    # Selected output formats (registry in formats.py). Surface only in
+    # this slice — the pipeline still keys render off skip_video alone.
+    formats: list[str] = Field(default_factory=lambda: ["demo", "gif"])
 
     # Optional user-supplied step-by-step guide (-s/--step-by-step): injected
     # into the cloned repo so the planner and agent treat it as authoritative,
@@ -139,6 +142,18 @@ class Config(BaseModel):
         if v is not None and not v.strip():
             raise ValueError("brand_font, if set, must be a non-empty font name")
         return v
+
+    @field_validator("formats", mode="after")
+    @classmethod
+    def _validate_formats(cls, value: list[str]) -> list[str]:
+        """Reject unknown or not-yet-implemented output formats at load time.
+
+        Shares the registry check with the ``--formats`` CLI parser so a bad
+        name in readme2demo.toml fails exactly like a bad flag would.
+        """
+        from readme2demo.formats import _validate_format_names
+
+        return _validate_format_names(list(value))
 
     @model_validator(mode="before")
     @classmethod
