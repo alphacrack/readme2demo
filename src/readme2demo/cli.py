@@ -26,6 +26,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from readme2demo.config import Config
+from readme2demo.formats import FormatError, parse_formats
 from readme2demo.manifest import STAGES, Manifest, stage_duration
 from readme2demo.orchestrator import (
     Orchestrator,
@@ -117,6 +118,7 @@ def _build_config(
     budget_usd: Optional[float],
     max_turns: Optional[int],
     skip_video: Optional[bool],
+    formats: Optional[list[str]],
     base_image: Optional[str],
     llm_backend: Optional[str] = None,
 ) -> Config:
@@ -129,6 +131,7 @@ def _build_config(
         budget_usd=budget_usd,
         max_turns=max_turns,
         skip_video=skip_video,
+        formats=formats,
         base_image=base_image,
         llm_backend=llm_backend,
     )
@@ -328,6 +331,11 @@ def run(
     budget_usd: Optional[float] = typer.Option(None, help="Abort if agent cost exceeds this"),
     max_turns: Optional[int] = typer.Option(None, help="Agent max turns"),
     skip_video: Optional[bool] = typer.Option(None, "--skip-video/--with-video"),
+    formats: Optional[str] = typer.Option(
+        None,
+        "--formats",
+        help="Comma-separated output formats (demo,gif today; podcast/promo/social reserved).",
+    ),
     base_image: Optional[str] = typer.Option(None, help="Sandbox base image"),
     step_by_step: Optional[Path] = typer.Option(
         None, "-s", "--step-by-step",
@@ -397,9 +405,17 @@ def run(
             provider, engine, model, llm_backend, preset_model
         )
         _announce_preset(provider, model)
+
+    parsed_formats = None
+    if formats is not None:
+        try:
+            parsed_formats = parse_formats(formats)
+        except FormatError as e:
+            raise typer.BadParameter(str(e), param_hint="--formats") from e
+
     cfg = _build_config(
         config_file, engine, model, output_dir, timeout,
-        budget_usd, max_turns, skip_video, base_image, llm_backend,
+        budget_usd, max_turns, skip_video, parsed_formats, base_image, llm_backend,
     )
     if dry_run:
         cfg = cfg.model_copy(update={"dry_run": True})
@@ -419,6 +435,9 @@ def run(
         )
     cfg = _apply_engine_image(cfg)
     _preflight(cfg)
+    console.print(
+        f"[dim]Selected formats: {escape(', '.join(cfg.formats))}[/]"
+    )
     orch = Orchestrator.new_run(repo_url, cfg)
     _drive(orch)
 

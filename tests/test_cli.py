@@ -806,3 +806,71 @@ def test_unverified_completion_prints_from_stage_distill(tmp_path, monkeypatch):
     collapsed = " ".join(result.output.split())
     assert "--from-stage distill" in collapsed
     assert "UNVERIFIED" in collapsed or "unverified" in collapsed.lower()
+
+
+# -- formats registry surface (#192) ------------------------------------------
+
+
+def test_formats_option_accepted_and_echoed(tmp_path, monkeypatch):
+    """Regression: --formats demo,gif is accepted and echoed at startup."""
+    from readme2demo.orchestrator import Orchestrator
+    from readme2demo.manifest import Manifest
+
+    monkeypatch.setattr("readme2demo.cli._preflight", lambda cfg: None)
+
+    def fake_new_run(repo_url, cfg):
+        run_dir = tmp_path / "run"
+        m = Manifest.create(run_dir, repo_url or _URL, "claude-code", "img")
+        m.verified = True
+        m.save()
+        orch = Orchestrator.__new__(Orchestrator)
+        orch.run_dir = run_dir
+        orch.cfg = cfg
+        orch.manifest = m
+        return orch
+
+    def fake_run(self):
+        return self.manifest
+
+    monkeypatch.setattr(Orchestrator, "new_run", staticmethod(fake_new_run))
+    monkeypatch.setattr(Orchestrator, "run", fake_run)
+
+    result = runner.invoke(
+        app, ["run", _URL, "--formats", "DEMO,demo,gif", "--skip-video"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Selected formats:" in result.output
+    assert "demo" in result.output
+    assert "gif" in result.output
+
+
+def test_formats_unknown_is_bad_option_not_toml_error():
+    """Regression: bad --formats must not be reported as a toml config error."""
+    result = runner.invoke(app, ["run", _URL, "--formats", "banana"])
+    assert result.exit_code != 0
+    out = result.output
+    assert "unknown format" in out.lower() or "banana" in out
+    assert "readme2demo.toml" not in out
+
+
+def test_formats_unimplemented_mentions_tracking_issue():
+    """Regression: unimplemented formats say not implemented yet + issue number."""
+    result = runner.invoke(app, ["run", _URL, "--formats", "podcast"])
+    assert result.exit_code != 0
+    out = result.output.lower()
+    assert "not implemented" in out
+    assert "#111" in result.output or "111" in result.output
+    assert "unknown format" not in out
+
+
+def test_parse_formats_unit():
+    """Regression: parse_formats normalizes case, spaces, and de-duplicates."""
+    from readme2demo.formats import parse_formats, FormatError
+    import pytest
+
+    assert parse_formats("demo, gif") == ["demo", "gif"]
+    assert parse_formats("DEMO,demo,gif") == ["demo", "gif"]
+    with pytest.raises(FormatError, match="unknown"):
+        parse_formats("banana")
+    with pytest.raises(FormatError, match="not implemented"):
+        parse_formats("promo")
