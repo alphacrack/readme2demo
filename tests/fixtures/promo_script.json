@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "total_duration_s": 30.0,
+  "scenes": [
+    {
+      "kind": "title_card",
+      "text": "alphacrack/readme2demo\nVerified in a fresh container",
+      "duration_s": 3.0
+    },
+    {
+      "kind": "demo_segment",
+      "text": "Install the CLI",
+      "step_index": 0,
+      "start_s": 12.5,
+      "end_s": 24.5,
+      "duration_s": 12.0
+    },
+    {
+      "kind": "demo_segment",
+      "text": "Run it against any repo",
+      "step_index": 3,
+      "start_s": 61.0,
+      "end_s": 79.0,
+      "duration_s": 18.0
+    },
+    {
+      "kind": "end_card",
+      "text": "pip install readme2demo",
+      "duration_s": 3.0
+    }
+  ]
+}
