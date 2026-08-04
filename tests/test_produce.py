@@ -82,6 +82,29 @@ def test_requested_formats_normalizes_case_dedupes_and_keeps_order():
     assert requested_formats(cfg) == ["gif", "demo", "promo"]
 
 
+def test_registry_implemented_flag_agrees_with_the_builder_table():
+    """Regression (#230/#170): a format the CLI accepts must have a builder,
+    and a format with a builder must be accepted by the CLI.
+
+    These are two separate tables — formats.FORMATS gates the --formats flag,
+    produce's registry resolves the builder — and they drifted: the promo
+    builder was wired while FORMATS still said implemented=False, so
+    `--formats promo` was rejected before produce() ever ran. Neither side's
+    own tests could see it.
+    """
+    from readme2demo.formats import FORMATS
+    from readme2demo.produce import RENDER_STAGE_FORMATS
+
+    for name, spec in FORMATS.items():
+        if name in RENDER_STAGE_FORMATS:
+            continue  # render owns these; produce never dispatches them
+        has_builder = builder_for(name) is not None
+        assert spec.implemented == has_builder, (
+            f"{name}: FORMATS says implemented={spec.implemented} but "
+            f"builder_for({name!r}) returned {'a builder' if has_builder else 'None'}"
+        )
+
+
 def test_requested_formats_defaults_to_the_render_stage_set():
     """Regression (#230): a default config leaves produce() nothing to dispatch.
 
