@@ -1,21 +1,41 @@
 """Tests for produce(): post-render dispatch of extra output formats (#230).
 
 No docker, no network, no API — every stage and every format builder is
-monkeypatched (the pattern in tests/test_orchestrator.py).
+monkeypatched (the pattern in tests/test_orchestrator.py). The promo builder
+(#170) is exercised the same way: its LLM pass and its ffmpeg compositor are
+both replaced, so this file stays in the sub-second suite.
 """
 
+import json
 from pathlib import Path
 
+import pytest
+
 from readme2demo import produce as produce_mod
+from readme2demo import promo as promo_mod
+from readme2demo import promo_script as promo_script_mod
 from readme2demo.config import Config
 from readme2demo.manifest import Manifest
 from readme2demo.orchestrator import Orchestrator
 from readme2demo.produce import (
     PRODUCED,
+    PROMO_FORMAT,
+    PROMO_INPUTS,
     PROTECTED_ARTIFACTS,
+    build_promo,
     builder_for,
     produce,
     requested_formats,
+)
+from readme2demo.promo_script import PromoScriptError
+from readme2demo.types import (
+    AgentResult,
+    CommandEntry,
+    CommandLog,
+    Plan,
+    PromoScene,
+    PromoScript,
+    SuccessCriteria,
 )
 
 _URL = "https://github.com/x/y"
@@ -90,7 +110,9 @@ def test_render_stage_formats_are_never_dispatched(tmp_path: Path):
 # -- the verified gate ---------------------------------------------------------
 
 
-def test_unverified_run_skips_every_extra_format_with_a_recorded_reason(tmp_path: Path):
+def test_unverified_run_skips_every_extra_format_with_a_recorded_reason(
+    tmp_path: Path, monkeypatch
+):
     """Regression (#230): formats are gated on manifest.verified, like render.
 
     An unverified run gets no promo cut — and, exactly as _stage_render records
@@ -104,11 +126,11 @@ def test_unverified_run_skips_every_extra_format_with_a_recorded_reason(tmp_path
 
     m = make_manifest(tmp_path, verified=False)
     seed_protected(m._run_dir)
-    produce_mod.register_builder("promo", builder)
-    try:
-        results = produce(m._run_dir, m, cfg_with_formats("demo", "gif", "promo"))
-    finally:
-        produce_mod._BUILDERS.pop("promo", None)
+    # setitem, not register_builder + pop: "promo" now has a real registered
+    # builder (#170), and popping it would leave the registry damaged for every
+    # test that runs after this one.
+    monkeypatch.setitem(produce_mod._BUILDERS, "promo", builder)
+    results = produce(m._run_dir, m, cfg_with_formats("demo", "gif", "promo"))
 
     assert results == {"promo": "skipped: replay unverified — no extra formats"}
     assert calls == [], "no builder may run on an unverified run"
@@ -125,21 +147,56 @@ def test_format_without_a_builder_is_skipped_not_failed(tmp_path: Path):
     assert results == {"podcast": "skipped: no builder registered for 'podcast'"}
 
 
-def test_optional_builder_whose_module_has_not_landed_is_a_skip(tmp_path: Path, monkeypatch):
-    """Regression (#230): a declared-but-absent builder module never crashes.
+#: A module path this repo will never ship, so the "not landed yet" premise
+#: below cannot go stale the way it did when ``readme2demo.promo`` landed.
+_UNLANDED_MODULE = "readme2demo._no_such_format_builder"
 
-    This is the state of #170's promo compositor today — the registry row can
-    point at ``readme2demo.promo`` before that module exists, and the format
-    simply reports as skipped.
+
+def test_optional_builder_whose_module_has_not_landed_is_a_skip(tmp_path: Path, monkeypatch):
+    """Regression (#230/#170): a declared-but-absent builder module never crashes.
+
+    The property: an optional row may name a module that does NOT exist — that
+    is what makes it safe to declare a format before its PR lands — and the
+    format degrades to a recorded skip instead of an ImportError that would
+    take the run down with it.
+
+    It used to be pinned with ``readme2demo.promo``, which was genuinely absent
+    when this test was written and is now the #170 compositor: the premise
+    quietly inverted and the test failed on the integration branch. It is
+    therefore pinned against a module this repo will never ship, and the
+    premise is asserted (``find_spec`` is None) rather than assumed, so a
+    future landing cannot invert it silently again.
     """
-    monkeypatch.setitem(
-        produce_mod._OPTIONAL_BUILDERS, "promo", ("readme2demo.promo", "render_promo")
+    import importlib.util
+
+    assert importlib.util.find_spec(_UNLANDED_MODULE) is None, (
+        f"{_UNLANDED_MODULE} exists — this test needs a module that does not"
     )
-    assert builder_for("promo") is None
+    monkeypatch.setitem(
+        produce_mod._OPTIONAL_BUILDERS, "podcast", (_UNLANDED_MODULE, "build_podcast")
+    )
+    assert builder_for("podcast") is None
     m = make_manifest(tmp_path)
     seed_protected(m._run_dir)
-    results = produce(m._run_dir, m, cfg_with_formats("promo"))
-    assert results["promo"].startswith("skipped: no builder registered")
+    results = produce(m._run_dir, m, cfg_with_formats("podcast"))
+    assert results["podcast"].startswith("skipped: no builder registered")
+
+
+def test_optional_builder_whose_attribute_has_not_landed_is_a_skip(tmp_path: Path, monkeypatch):
+    """Regression (#230/#170): the other half — module present, entry point absent.
+
+    The successor state of the test above now that ``readme2demo.promo`` is a
+    real module: a row may point into a module that exists but does not (yet)
+    expose the named callable, and that is still a skip, not an AttributeError.
+    """
+    monkeypatch.setitem(
+        produce_mod._OPTIONAL_BUILDERS, "podcast", ("readme2demo.promo", "build_podcast")
+    )
+    assert builder_for("podcast") is None
+    m = make_manifest(tmp_path)
+    seed_protected(m._run_dir)
+    results = produce(m._run_dir, m, cfg_with_formats("podcast"))
+    assert results["podcast"].startswith("skipped: no builder registered")
 
 
 def test_optional_builder_is_resolved_lazily_once_its_module_exists(
@@ -154,12 +211,12 @@ def test_optional_builder_is_resolved_lazily_once_its_module_exists(
     module.build = lambda run_dir, manifest, cfg: seen.append(run_dir)  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "fake_format_builders", module)
     monkeypatch.setitem(
-        produce_mod._OPTIONAL_BUILDERS, "promo", ("fake_format_builders", "build")
+        produce_mod._OPTIONAL_BUILDERS, "podcast", ("fake_format_builders", "build")
     )
 
     m = make_manifest(tmp_path)
     seed_protected(m._run_dir)
-    assert produce(m._run_dir, m, cfg_with_formats("promo")) == {"promo": PRODUCED}
+    assert produce(m._run_dir, m, cfg_with_formats("podcast")) == {"podcast": PRODUCED}
     assert seen == [m._run_dir]
 
 
@@ -171,9 +228,21 @@ def test_non_callable_attribute_resolves_to_no_builder(monkeypatch):
     module.build = "not callable"  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "fake_format_builders", module)
     monkeypatch.setitem(
-        produce_mod._OPTIONAL_BUILDERS, "promo", ("fake_format_builders", "build")
+        produce_mod._OPTIONAL_BUILDERS, "podcast", ("fake_format_builders", "build")
     )
-    assert builder_for("promo") is None
+    assert builder_for("podcast") is None
+
+
+def test_explicit_registration_wins_over_an_optional_row(monkeypatch):
+    """Registered builders are checked first — the promo's row is never consulted.
+
+    The two tests above used to be written against "promo"; they now use a
+    format with no built-in builder, and this pins the reason why.
+    """
+    monkeypatch.setitem(
+        produce_mod._OPTIONAL_BUILDERS, "promo", (_UNLANDED_MODULE, "render_promo")
+    )
+    assert builder_for("promo") is produce_mod.build_promo
 
 
 # -- best-effort execution -----------------------------------------------------
@@ -549,3 +618,354 @@ def test_protected_artifact_list_is_the_grounding_set():
     assert PROTECTED_ARTIFACTS == (
         "demo.mp4", "step_by_step.md", "commands.sh", "demo.tape",
     )
+
+
+# -- the promo builder (#170) --------------------------------------------------
+
+# Both halves of the promo are replaced: run_promo_script (the paid LLM pass)
+# and render_promo (docker + ffmpeg). What is under test is the adapter between
+# them — what it loads, what it publishes, and where the money is recorded.
+
+_TIMESTAMPS = {
+    "total_min_s": 12.0,
+    "steps": [
+        {
+            "index": 0,
+            "cmd": "python hello.py",
+            "title": "Run the example",
+            "start_min_s": 1.0,
+            "end_min_s": 5.0,
+        }
+    ],
+}
+
+
+def seed_promo_inputs(run_dir: Path) -> None:
+    """Write the run artifacts build_promo reads, minus the guide.
+
+    ``step_by_step.md`` is one of the four PROTECTED_ARTIFACTS, so it comes
+    from :func:`seed_protected` — the promo's guide input IS the published
+    guide, which is the point of reading it rather than the distiller's draft.
+    """
+    plan = Plan(
+        quickstart_summary="run the hello example",
+        success_criteria=SuccessCriteria(command="python hello.py"),
+    )
+    log = CommandLog(
+        engine="claude-code",
+        entries=[CommandEntry(cmd="python hello.py", exit_code=0)],
+        result=AgentResult(outcome="success"),
+    )
+    (run_dir / "plan.json").write_text(plan.model_dump_json())
+    (run_dir / "command_log.json").write_text(log.model_dump_json())
+    (run_dir / "step_timestamps.json").write_text(json.dumps(_TIMESTAMPS))
+
+
+def promo_script_fixture() -> PromoScript:
+    """A scene list of the shape run_promo_script returns once validated."""
+    return PromoScript(
+        total_duration_s=8.0,
+        scenes=[
+            PromoScene(kind="title_card", text="x/y — verified", duration_s=2.0),
+            PromoScene(
+                kind="demo_segment", step_index=0, start_s=1.0, end_s=5.0, duration_s=4.0
+            ),
+            PromoScene(kind="end_card", text="python hello.py", duration_s=2.0),
+        ],
+    )
+
+
+def promo_run(tmp_path: Path, *, name: str = "run") -> Manifest:
+    """A verified run dir with every artifact the promo builder needs."""
+    m = make_manifest(tmp_path, name=name)
+    seed_protected(m._run_dir)
+    seed_promo_inputs(m._run_dir)
+    return m
+
+
+def install_promo_fakes(
+    monkeypatch,
+    *,
+    cost: float = 0.0,
+    script: PromoScript | None = None,
+    rendered: str | None = "promo.mp4",
+    raises: BaseException | None = None,
+) -> dict:
+    """Replace the LLM pass and the compositor; return a call recorder.
+
+    ``rendered=None`` models render_promo's refusal contract: ``None`` back,
+    while whatever it wrote stays on disk.
+    """
+    seen: dict = {"script_calls": [], "render_calls": []}
+    plan_script = script or promo_script_fixture()
+
+    def fake_run_promo_script(plan, log, guide_text, timestamps, model, **kwargs):
+        seen["script_calls"].append(
+            {
+                "plan": plan,
+                "log": log,
+                "guide_text": guide_text,
+                "timestamps": timestamps,
+                "model": model,
+                **kwargs,
+            }
+        )
+        if raises is not None:
+            raise raises
+        return plan_script, cost
+
+    def fake_render_promo(run_dir, script, cfg, **kwargs):
+        seen["render_calls"].append({"run_dir": run_dir, "script": script, **kwargs})
+        # A real render writes the file even on the path where it then refuses
+        # to return it — that stale artifact is the evidence promo.log names.
+        (run_dir / "promo.mp4").write_bytes(b"promo frames")
+        return None if rendered is None else run_dir / rendered
+
+    monkeypatch.setattr(promo_script_mod, "run_promo_script", fake_run_promo_script)
+    monkeypatch.setattr(promo_mod, "render_promo", fake_render_promo)
+    return seen
+
+
+def test_promo_is_registered_by_default():
+    """The last mile: --formats promo resolves to a builder without any wiring."""
+    assert builder_for(PROMO_FORMAT) is build_promo
+
+
+def test_regression_promo_builder_produces_promo_mp4_and_records_produced(
+    tmp_path: Path, monkeypatch
+):
+    """Regression (#230/#170): the happy path of the wired promo format.
+
+    Three modules that shipped in separate PRs (#255 the scene planner, #254
+    the compositor, #253 the dispatch) produce one artifact: promo.mp4, plus
+    promo_script.json, recorded as "produced" in manifest.formats — and none of
+    the four protected artifacts moves a byte.
+    """
+    seen = install_promo_fakes(monkeypatch, cost=0.0123)
+    m = promo_run(tmp_path)
+    before = seed_protected(m._run_dir)
+
+    results = produce(m._run_dir, m, cfg_with_formats("demo", "gif", "promo"))
+
+    assert results == {"promo": PRODUCED}
+    assert (m._run_dir / "promo.mp4").read_bytes() == b"promo frames"
+    assert Manifest.load(m._run_dir).formats == {"promo": PRODUCED}
+    for name, data in before.items():
+        assert (m._run_dir / name).read_bytes() == data
+
+    # promo_script.json is written through promo_script's own writer, from the
+    # SAME object handed to the compositor — one scene list, one artifact.
+    written = promo_script_mod.load_promo_script(m._run_dir)
+    assert written is not None
+    assert written.model_dump() == seen["render_calls"][0]["script"].model_dump()
+
+    # The planner is fed the run's own artifacts, not re-derived ones.
+    call = seen["script_calls"][0]
+    assert call["plan"].success_criteria.command == "python hello.py"
+    assert call["log"].entries[0].cmd == "python hello.py"
+    assert call["guide_text"] == "step_by_step.md contents\n"
+    assert call["timestamps"] == _TIMESTAMPS
+    assert call["repo_url"] == _URL
+
+
+def test_regression_promo_llm_cost_reaches_the_manifest(tmp_path: Path, monkeypatch):
+    """Regression (#230/#170): a paid format's spend is accounted (#103/#209).
+
+    The promo is the first output format that costs money. If the cost stopped
+    at the builder, a run would report a total that is missing every dollar it
+    spent on the cut — the same bug stage_fail(cost_usd=...) was added to fix.
+    """
+    install_promo_fakes(monkeypatch, cost=0.0725)
+    m = promo_run(tmp_path)
+
+    produce(m._run_dir, m, cfg_with_formats("promo"))
+
+    loaded = Manifest.load(m._run_dir)
+    assert loaded.format_costs == {"promo": 0.0725}
+    assert loaded.total_cost_usd == 0.0725
+    # ... and it survives the next stage transition, because the total is
+    # recomputed from every source of spend, not just the stage records.
+    m.stage_complete("render", cost_usd=0.25)
+    assert Manifest.load(m._run_dir).total_cost_usd == 0.3225
+
+
+def test_regression_failing_promo_script_is_a_skip_that_still_records_its_cost(
+    tmp_path: Path, monkeypatch
+):
+    """Regression (#230/#170): a PAID failure records the money AND skips.
+
+    PromoScriptError arrives after up to two LLM calls (generate + grounding
+    retry) and carries cost_usd for exactly this reason. The run must come out
+    byte-identical, the format recorded as skipped, and the spend still on the
+    books — a failure that reports $0.00 is the bug, not the failure.
+    """
+    install_promo_fakes(
+        monkeypatch,
+        raises=PromoScriptError("still ungrounded after retry", cost_usd=0.019),
+    )
+    m = promo_run(tmp_path)
+    before = seed_protected(m._run_dir)
+
+    results = produce(m._run_dir, m, cfg_with_formats("promo"))
+
+    assert results["promo"].startswith("skipped: builder failed — PromoScriptError")
+    assert "still ungrounded after retry" in results["promo"]
+    loaded = Manifest.load(m._run_dir)
+    assert loaded.formats == results
+    assert loaded.format_costs == {"promo": 0.019}
+    assert loaded.total_cost_usd == 0.019
+    # Byte-identical: an optional output may not touch the grounding path.
+    for name, data in before.items():
+        assert (m._run_dir / name).read_bytes() == data
+    assert not (m._run_dir / "promo.mp4").exists()
+    assert not (m._run_dir / "promo_script.json").exists()
+
+
+def test_regression_a_broken_cost_on_the_error_never_masks_the_error(
+    tmp_path: Path, monkeypatch
+):
+    """Regression (#230/#170): rescuing the spend must not replace the failure.
+
+    The cost is read off a live exception while it propagates. A ``cost_usd``
+    that is not a number would make ``float()`` raise there and the run would
+    be told the promo died of a TypeError — hiding the reason it actually died.
+    """
+    class WeirdError(RuntimeError):
+        cost_usd = "not a number"
+
+    install_promo_fakes(monkeypatch, raises=WeirdError("planner exploded"))
+    m = promo_run(tmp_path)
+
+    results = produce(m._run_dir, m, cfg_with_formats("promo"))
+
+    assert results["promo"].startswith("skipped: builder failed — WeirdError")
+    assert "planner exploded" in results["promo"]
+    assert Manifest.load(m._run_dir).format_costs == {"promo": 0.0}
+
+
+def test_regression_none_from_render_promo_is_a_skip_even_with_a_file_on_disk(
+    tmp_path: Path, monkeypatch
+):
+    """Regression (#230/#170): publish from the return value, never by globbing.
+
+    render_promo leaves the un-validated cut in the run dir on purpose when its
+    size/duration gate refuses it (test_failed_gate_returns_none_but_leaves_the
+    _evidence pins that half). An adapter that treated "promo.mp4 exists" as
+    success would publish exactly the truncated video the compositor refused.
+    """
+    install_promo_fakes(monkeypatch, cost=0.004, rendered=None)
+    m = promo_run(tmp_path)
+
+    results = produce(m._run_dir, m, cfg_with_formats("promo"))
+
+    assert (m._run_dir / "promo.mp4").exists(), "the evidence file is left alone"
+    assert results["promo"].startswith("skipped: builder failed — PromoError")
+    assert "promo.log" in results["promo"]
+    loaded = Manifest.load(m._run_dir)
+    assert loaded.formats == results
+    assert loaded.format_costs == {"promo": 0.004}  # the plan was still paid for
+
+
+@pytest.mark.parametrize("missing", PROMO_INPUTS)
+def test_regression_missing_run_artifact_is_a_skip_not_a_crash(
+    tmp_path: Path, monkeypatch, missing: str
+):
+    """Regression (#230/#170): an incomplete run dir degrades, it does not raise.
+
+    A run rendered with --skip-video, or one predating step_timestamps.json,
+    has no footage table to cut against. That is a recorded skip naming the
+    file — and it must cost nothing, because the LLM is never reached.
+
+    Parametrized over PROMO_INPUTS so the documented input set is the one the
+    builder really requires: an input added to that tuple is checked here, and
+    one the builder stops needing has to leave the tuple.
+    """
+    seen = install_promo_fakes(monkeypatch, cost=1.0)
+    m = promo_run(tmp_path, name=f"run-{missing}")
+    (m._run_dir / missing).unlink()
+
+    results = produce(m._run_dir, m, cfg_with_formats("promo"))
+
+    assert results["promo"].startswith("skipped: builder failed — FileNotFoundError")
+    assert missing in results["promo"]
+    assert seen["script_calls"] == [], "no paid call on an unusable run dir"
+    assert Manifest.load(m._run_dir).format_costs == {}
+
+
+def test_regression_unknown_promo_style_fails_before_the_paid_call(
+    tmp_path: Path, monkeypatch
+):
+    """Regression (#230/#170): a config typo must not cost an LLM call.
+
+    Same rule as the ingest infeasibility gate — fail for pennies, before the
+    expensive part. The style/duration presets are validated up front, so a
+    misspelt --promo-style is a skip with a spend of zero.
+    """
+    seen = install_promo_fakes(monkeypatch, cost=1.0)
+    m = promo_run(tmp_path)
+    cfg = cfg_with_formats("promo").model_copy(update={"promo_style": "neon"})
+
+    results = produce(m._run_dir, m, cfg)
+
+    assert results["promo"].startswith("skipped: builder failed — PromoError")
+    assert "unknown promo style" in results["promo"]
+    assert seen["script_calls"] == []
+    assert Manifest.load(m._run_dir).format_costs == {}
+
+
+def test_promo_style_and_duration_are_read_defensively_from_config(
+    tmp_path: Path, monkeypatch
+):
+    """Defaults today, config values once the flags land — like requested_formats.
+
+    Config has no promo_style/promo_duration field yet (it arrives with the
+    --formats registry PR), so the builder reads both through getattr and this
+    wiring does not depend on that PR landing first.
+    """
+    seen = install_promo_fakes(monkeypatch)
+    m = promo_run(tmp_path)
+    assert getattr(Config(), "promo_style", None) is None
+
+    produce(m._run_dir, m, cfg_with_formats("promo"))
+    assert seen["render_calls"][0]["style"] == promo_mod.DEFAULT_STYLE
+    assert seen["render_calls"][0]["preset"] == promo_mod.DEFAULT_DURATION
+    # The cut is PLANNED for the same budget the compositor then enforces.
+    assert seen["script_calls"][0]["target_duration_s"] == float(promo_mod.DEFAULT_DURATION)
+
+    seen2 = install_promo_fakes(monkeypatch)
+    m2 = promo_run(tmp_path, name="run2")
+    cfg = cfg_with_formats("promo").model_copy(
+        update={"promo_style": "energetic", "promo_duration": 15}
+    )
+    assert produce(m2._run_dir, m2, cfg) == {"promo": PRODUCED}
+    assert seen2["render_calls"][0]["style"] == "energetic"
+    assert seen2["render_calls"][0]["preset"] == 15
+    assert seen2["script_calls"][0]["target_duration_s"] == 15.0
+
+
+def test_regression_promo_never_runs_on_an_unverified_run(tmp_path: Path, monkeypatch):
+    """Regression (#230/#170): the verified gate covers the real builder too.
+
+    Not a re-test of the gate: a promo of an unverified run would be a shareable
+    video of commands no fresh container ever executed, so the wired-in builder
+    (not just a test double) must be unreachable on that path — and cost zero.
+    """
+    seen = install_promo_fakes(monkeypatch, cost=2.0)
+    m = make_manifest(tmp_path, verified=False)
+    seed_protected(m._run_dir)
+    seed_promo_inputs(m._run_dir)
+
+    results = produce(m._run_dir, m, cfg_with_formats("promo"))
+
+    assert results == {"promo": "skipped: replay unverified — no extra formats"}
+    assert seen["script_calls"] == [] and seen["render_calls"] == []
+    assert Manifest.load(m._run_dir).format_costs == {}
+    assert not (m._run_dir / "promo.mp4").exists()
+
+
+def test_manifests_written_before_the_format_costs_field_still_load(tmp_path: Path):
+    """Regression (#170): the cost map is additive — old runs keep resuming."""
+    m = Manifest.create(tmp_path / "old-costs", _URL, "claude-code", "img")
+    raw = m.model_dump()
+    raw.pop("format_costs")
+    assert Manifest.model_validate(raw).format_costs == {}

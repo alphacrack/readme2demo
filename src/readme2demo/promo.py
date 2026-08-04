@@ -87,38 +87,12 @@ from . import render
 from .brand import logo_overlay, title_card_drawtext
 from .config import Config
 
-# --- PENDING DEPENDENCY (#169) -------------------------------------------------
-# ``PromoScene``/``PromoScript`` belong to types.py (its docstring makes it "the
-# single source of truth" for stage contracts) and land with slice 1 (#169).
-# This branch STACKS on that one: the import below is the real contract, and the
-# fallback exists only so this slice's pure tests run standalone before #169
-# merges. DELETE THE ``except ImportError`` BLOCK AT MERGE — two definitions of
-# a stage contract is exactly the drift types.py exists to prevent.
-try:  # pragma: no cover - exercised by whichever branch is present
-    from .types import PromoScene, PromoScript  # type: ignore[attr-defined]
-except ImportError:  # pragma: no cover - dropped when #169 lands
-    from typing import Literal
-
-    from pydantic import BaseModel
-
-    class PromoScene(BaseModel):  # type: ignore[no-redef]
-        """TEMPORARY local copy of the #169 contract — see the note above."""
-
-        kind: Literal["title_card", "demo_segment", "end_card"]
-        text: Optional[str] = None
-        # Provenance only — never read by this module; see the module docstring.
-        step_index: Optional[int] = None
-        start_s: Optional[float] = None
-        end_s: Optional[float] = None
-        duration_s: float
-
-    class PromoScript(BaseModel):  # type: ignore[no-redef]
-        """TEMPORARY local copy of the #169 contract — see the note above."""
-
-        version: int = 1
-        total_duration_s: float
-        scenes: list[PromoScene]
-
+# ``PromoScene``/``PromoScript`` are stage contracts, so they live in types.py —
+# "the single source of truth" — and are imported, never re-declared. This
+# module carried a local fallback copy of both while slice 1 (#169) was still in
+# flight; it was deleted the moment that branch landed, because two definitions
+# of a stage contract is exactly the drift types.py exists to prevent.
+from .types import PromoScene, PromoScript
 
 #: Artifact this module writes, next to (never over) ``demo.mp4``.
 PROMO_ARTIFACT = "promo.mp4"

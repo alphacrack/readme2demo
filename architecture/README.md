@@ -137,6 +137,18 @@ raises, is unimplemented, or mutates one of the four protected artifacts
 before and after each call) is recorded in `manifest.formats` as
 `skipped: <reason>` and never fails the run.
 
+The one builder wired today is `produce.build_promo` (`--formats promo`): it
+plans the cut with one grounded LLM pass (`promo_script.run_promo_script` —
+every `demo_segment` must trace to a step that is both published in the final
+`step_by_step.md` and grounded in `command_log.json`), writes
+`promo_script.json`, and hands the plan to the deterministic ffmpeg compositor
+(`promo.render_promo`), whose only footage input is the run's own `demo.mp4`.
+It is the first output format that costs money, so its LLM spend is recorded in
+`manifest.format_costs` on the failure path as well as the success path and is
+summed into `total_cost_usd`. A `None` from `render_promo` means *not
+produced* — even when a refused `promo.mp4` is still on disk as the evidence
+`promo.log` describes.
+
 Engines are plugins (`engines/base.py`): `claude-code` (default) and
 `openhands` (experimental) both normalize to the same `command_log.json` —
 nothing downstream knows which agent ran.
