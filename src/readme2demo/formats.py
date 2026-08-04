@@ -44,8 +44,8 @@ FORMATS: dict[str, FormatSpec] = {
     ),
     "promo": FormatSpec(
         name="promo",
-        implemented=False,
-        description="Short promo cut of the demo video",
+        implemented=True,
+        description="Short promo cut composited from the verified demo video",
         tracking_issue=114,
     ),
     "social": FormatSpec(
