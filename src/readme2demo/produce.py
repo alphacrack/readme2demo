@@ -30,12 +30,20 @@ Formats are **not stages**: they are absent from ``manifest.STAGES``, they are
 not resumable, and they never gate the run. A builder that is not registered —
 or whose module has not landed yet — simply yields a skipped format, which is
 exactly how a format implemented in a later PR behaves today.
+
+One builder ships here: :func:`build_promo` (#170), the adapter this module's
+registry was designed around. It is the only place that knows a promo is a
+*paid* output — it plans the cut with an LLM (``promo_script.run_promo_script``)
+and hands the result to the deterministic compositor (``promo.render_promo``) —
+so it is also the only place that has to answer for the money: the spend lands
+in ``manifest.format_costs`` on the success AND the failure path (#103/#209).
 """
 
 from __future__ import annotations
 
 import hashlib
 import importlib
+import json
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -84,15 +92,26 @@ _BUILDERS: dict[str, FormatBuilder] = {}
 
 #: Lazily-imported builders: format name → ``(module, attribute)``. The module
 #: need NOT exist — a failed import resolves to "no builder", i.e. a skipped
-#: format, so declaring a row here costs nothing before its PR lands. Wiring
-#: #170's promo compositor is one line in this table once ``promo.py`` exposes a
-#: callable with the :data:`FormatBuilder` signature; because #170 ships
-#: ``render_promo(run_dir, script, cfg)`` (its middle argument is the promo
-#: script, not the manifest), that one line is instead a three-line adapter
-#: handed to :func:`register_builder`. Either way :func:`produce` is untouched.
-_OPTIONAL_BUILDERS: dict[str, tuple[str, str]] = {
-    # "promo": ("readme2demo.promo", "render_promo"),  # ← #170
-}
+#: format, so declaring a row here costs nothing before its PR lands. This is
+#: the seam for a format whose entry point ALREADY has the
+#: :data:`FormatBuilder` shape; #170's promo does not (it ships
+#: ``render_promo(run_dir, script, cfg)``, whose middle argument is the promo
+#: script, not the manifest), so it goes through the adapter at the bottom of
+#: this module instead. Either way :func:`produce` is untouched.
+_OPTIONAL_BUILDERS: dict[str, tuple[str, str]] = {}
+
+#: The promo cut (#170): registered below, once :func:`build_promo` is defined.
+PROMO_FORMAT = "promo"
+
+#: Run artifacts :func:`build_promo` reads. ``step_by_step.md`` is the FINAL
+#: guide (tutorial stage) and ``step_timestamps.json`` is derived from the same
+#: tape the render stage filmed, so a scene can only cite footage that exists.
+PROMO_INPUTS: tuple[str, ...] = (
+    "plan.json",
+    "command_log.json",
+    "step_by_step.md",
+    "step_timestamps.json",
+)
 
 
 def register_builder(name: str, builder: FormatBuilder) -> None:
@@ -245,3 +264,159 @@ def produce(run_dir: Path, manifest: Manifest, cfg: Config) -> dict[str, str]:
 
     manifest.record_formats(results)
     return results
+
+
+# --- the promo builder (#170) --------------------------------------------------
+
+
+def _read_artifact(run_dir: Path, name: str) -> str:
+    """Text of a run artifact the promo needs, or a naming error.
+
+    A missing input is the single most likely reason a promo cannot be built
+    (``--skip-video`` ran, an old run predates ``step_timestamps.json``), so it
+    is worth one clear sentence in ``manifest.formats`` instead of whatever
+    ``FileNotFoundError`` a deeper call would have produced.
+    """
+    path = run_dir / name
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{name} is missing from {run_dir} — the promo cut is derived from "
+            "the verified run's own artifacts and cannot be built without it"
+        )
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _exception_cost(exc: BaseException) -> float:
+    """Spend an exception says it already incurred, or ``0.0``.
+
+    The same ``getattr(e, "cost_usd", 0.0)`` contract ``orchestrator.run`` uses
+    for a failed stage, hardened for a failure path: this runs while another
+    exception is propagating, so a ``cost_usd`` that is not a number must not
+    become the exception the caller sees instead of the real one.
+    """
+    try:
+        return float(getattr(exc, "cost_usd", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def build_promo(run_dir: Path, manifest: Manifest, cfg: Config) -> None:
+    """Build ``promo.mp4`` for a verified run — a :data:`FormatBuilder` (#170).
+
+    The adapter between the two halves of the promo epic, and nothing more:
+
+    1. load the run's own artifacts (:data:`PROMO_INPUTS`),
+    2. ``promo_script.run_promo_script`` — the ONE paid call: it returns a
+       :class:`~readme2demo.types.PromoScript` only after the code-level
+       validator confirms every ``demo_segment`` traces to a step that is both
+       published in the final ``step_by_step.md`` and grounded in
+       ``command_log.json``,
+    3. record the spend (below),
+    4. write ``promo_script.json`` through the module that owns that artifact,
+    5. ``promo.render_promo`` — deterministic, $0, and the only code that
+       touches ffmpeg.
+
+    **Cost.** ``run_promo_script`` returns its spend and its ``PromoScriptError``
+    carries ``cost_usd``, so the ``finally`` below records it either way. A
+    promo that pays for a grounding retry and *then* fails still spent that
+    money, and a run that reports $0.00 for it is the bug #103/#209 exist to
+    prevent. This is the format-level analogue of ``stage_fail(cost_usd=…)``.
+
+    **The verified gate is already applied.** Both promo modules state that
+    their caller must establish ``manifest.verified`` before a cut is planned or
+    composited — a promo of an unverified run would be a shareable video of
+    commands no fresh container executed. This function is that caller's
+    callee: :func:`produce` refuses to dispatch anything on an unverified run,
+    which is why the check does not (and must not) live here as a second,
+    softer copy.
+
+    **Failure is never a run failure.** Every path out of here is either a
+    written ``promo.mp4`` or an exception, which :func:`produce` turns into
+    ``skipped: <reason>`` in ``manifest.formats``. Nothing here writes a
+    protected artifact (``render_promo``'s ffmpeg argv can only write
+    ``/vhs/promo.mp4``, audited by ``promo.assert_only_demo_footage``), and
+    ``produce`` fingerprints them around this call regardless.
+
+    **Publication comes from the return value, never from the disk.**
+    ``render_promo`` returns ``None`` when its size/duration gate refuses a cut
+    it nonetheless left on disk as the evidence ``promo.log`` describes; a
+    caller that published by globbing the run dir would ship exactly the
+    truncated video the compositor just refused. ``None`` is therefore a skip
+    even when ``promo.mp4`` exists.
+
+    Args:
+        run_dir: the verified run directory; also where ``promo.mp4`` lands.
+        manifest: the run manifest — supplies ``repo_url`` for the title card
+            and receives the LLM spend via ``record_format_cost``.
+        cfg: pipeline config: ``model`` for the scene-planning call, plus the
+            brand kit and container limits the compositor uses.
+
+    Raises:
+        Exception: any failure at all, for :func:`produce` to record as a skip.
+    """
+    # Imported inside the builder on purpose: promo_script pulls in the LLM
+    # backends and the distiller, and the dispatch registry must stay importable
+    # (and cheap) for the runs that never ask for a promo. An optional
+    # dependency that is missing then degrades to a recorded skip, exactly like
+    # a builder module that has not landed.
+    from . import promo as promo_mod
+    from . import promo_script as promo_script_mod
+    from .types import CommandLog, Plan
+
+    # Presentation knobs, read defensively through getattr for the same reason
+    # requested_formats() does: the --promo-style/--promo-duration surface is a
+    # later PR's, and this wiring must not depend on it landing first.
+    style = str(getattr(cfg, "promo_style", None) or promo_mod.DEFAULT_STYLE)
+    preset = int(getattr(cfg, "promo_duration", None) or promo_mod.DEFAULT_DURATION)
+    # Validate the presets BEFORE the paid call: an unknown style is a config
+    # typo, and a typo must not cost an LLM call to discover (the same
+    # fail-fast-for-pennies rule the ingest infeasibility gate follows).
+    promo_mod.style_preset(style)
+    promo_mod.duration_preset(preset)
+
+    # Read through PROMO_INPUTS rather than four literals, so the documented
+    # input set IS the one that gets loaded — and every one of them is proven
+    # present before the paid call, not one at a time as the code reaches it.
+    artifacts = {name: _read_artifact(run_dir, name) for name in PROMO_INPUTS}
+    plan = Plan.model_validate_json(artifacts["plan.json"])
+    log = CommandLog.model_validate_json(artifacts["command_log.json"])
+    guide_text = artifacts["step_by_step.md"]
+    timestamps = json.loads(artifacts["step_timestamps.json"])
+    if not isinstance(timestamps, dict):
+        raise promo_mod.PromoError(
+            "step_timestamps.json is not a JSON object — without the per-step "
+            "windows no scene can be bounds-checked against real footage"
+        )
+
+    cost = 0.0
+    try:
+        script, cost = promo_script_mod.run_promo_script(
+            plan,
+            log,
+            guide_text,
+            timestamps,
+            cfg.model,
+            repo_url=manifest.repo_url,
+            # Plan the cut for the same budget the compositor will enforce, so
+            # the duration gate in validate_promo is judging the length the
+            # model was actually asked for.
+            target_duration_s=float(preset),
+        )
+    except Exception as e:  # noqa: BLE001 — re-raised; this only rescues the cost
+        cost = _exception_cost(e)
+        raise
+    finally:
+        manifest.record_format_cost(PROMO_FORMAT, cost)
+
+    promo_script_mod.write_promo_script(script, run_dir)
+    produced = promo_mod.render_promo(run_dir, script, cfg, style=style, preset=preset)
+    if produced is None:
+        raise promo_mod.PromoError(
+            f"no {promo_mod.PROMO_ARTIFACT} was produced — see "
+            f"{promo_mod.PROMO_LOG} in the run directory. Any file of that name "
+            "left on disk is the refused cut, kept as evidence, and is NOT "
+            "published"
+        )
+
+
+register_builder(PROMO_FORMAT, build_promo)
