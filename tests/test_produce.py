@@ -136,12 +136,21 @@ def test_format_without_a_builder_is_skipped_not_failed(tmp_path: Path):
 def test_optional_builder_whose_module_has_not_landed_is_a_skip(tmp_path: Path, monkeypatch):
     """Regression (#230): a declared-but-absent builder module never crashes.
 
-    This is the state of #170's promo compositor today — the registry row can
-    point at ``readme2demo.promo`` before that module exists, and the format
-    simply reports as skipped.
+    A registry row may name a module that does not exist yet — that is the
+    whole point of ``_OPTIONAL_BUILDERS``, so a future format can be declared
+    before it is built. Resolution must degrade to a skip, never an
+    ImportError that takes the run down with it.
+
+    This deliberately points at a module that will never exist. It used to
+    point at ``readme2demo.promo`` back when #170 was unbuilt; once that
+    module landed the row resolved and this test asserted something false.
+    The guarantee is about ABSENT modules, so the fixture must be absent by
+    construction rather than by accident of merge order.
     """
     monkeypatch.setitem(
-        produce_mod._OPTIONAL_BUILDERS, "promo", ("readme2demo.promo", "render_promo")
+        produce_mod._OPTIONAL_BUILDERS,
+        "promo",
+        ("readme2demo._module_that_does_not_exist", "render_promo"),
     )
     assert builder_for("promo") is None
     m = make_manifest(tmp_path)
