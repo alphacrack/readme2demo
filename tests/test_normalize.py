@@ -1008,3 +1008,285 @@ def test_reconciler_is_ordered_after_findings_marking():
 
     src = inspect.getsource(orchestrator.Orchestrator._stage_normalize)
     assert src.index("mark_findings_success") < src.index("reconcile_success_command")
+
+
+# --- OpenHandsEngine.parse_transcript: the native `finish` action (#259) ------
+
+
+def _openhands_log(tmp_path, events: list[dict]):
+    from readme2demo.engines.openhands import OpenHandsEngine
+
+    path = tmp_path / "trajectory.json"
+    path.write_text(json.dumps(events), encoding="utf-8")
+    return OpenHandsEngine().parse_transcript(path)
+
+
+def test_regression_259_finish_action_success_from_real_trajectory(fixtures_dir: Path):
+    """Regression (#259, run glow-20260804-203454-2e5c91): the agent built glow
+    and rendered the README, then signalled success through OpenHands' NATIVE
+    `finish` action instead of printing R2D_SUCCESS to a shell. The parser
+    scanned agent MESSAGE actions only, so the marker never reached the scanner
+    and a working run was recorded as outcome="failed", killing the pipeline at
+    normalize. This golden fixture is that trajectory (event 18 — the finish
+    action — verbatim); it parses as "failed" without the fix.
+    """
+    from readme2demo.engines.openhands import OpenHandsEngine
+
+    log = OpenHandsEngine().parse_transcript(
+        fixtures_dir / "openhands_glow_trajectory.json"
+    )
+    assert log.result.outcome == "success"
+    assert log.result.blocked_reason is None
+    # The same fixture carries the class-16 poison: a source="user" echo of the
+    # task prompt documenting `BLOCKED: <reason>` / `ADJUSTED_SUCCESS: <new
+    # command>`. Reading the finish action must not have re-opened that door.
+    assert log.adjusted_success_command is None
+    assert log.adjusted_success_pattern is None
+    assert log.fixes == []
+    # The real work is still parsed out of the run actions.
+    assert len(log.entries) == 7
+    assert log.entries[-1].cmd.strip() == "cd /work && ./glow README.md"
+    assert "Render markdown on the CLI" in log.entries[-1].output
+
+
+def test_regression_259_finish_action_marker_shapes(tmp_path):
+    """Regression (#259): the finish text lands in a different field in almost
+    every OpenHands/provider combination — on the event (`message`), in the
+    action args (`final_thought`), or inside the `finish` tool call's
+    `arguments`, which arrive either as a JSON string or an already-parsed
+    dict, at the top of the event or nested under `tool_call_metadata`. Every
+    shape must ground; none may explode.
+    """
+    shapes: list[dict] = [
+        # 1. event-level message only
+        {"action": "finish", "source": "agent", "message": "R2D_SUCCESS"},
+        # 2. args.final_thought (what OpenHands 0.48 writes)
+        {
+            "action": "finish", "source": "agent",
+            "message": "All done! What's next on the agenda?",
+            "args": {"final_thought": "R2D_SUCCESS", "task_completed": "true",
+                     "outputs": {}, "thought": ""},
+        },
+        # 3. top-level tool call, arguments as a JSON *string*
+        {
+            "action": "finish", "source": "agent",
+            "tool_calls": [{"function": {
+                "name": "finish",
+                "arguments": '{"message": "R2D_SUCCESS", "task_completed": "true"}',
+            }}],
+        },
+        # 4. same, arguments already parsed into a dict
+        {
+            "action": "finish", "source": "agent",
+            "tool_calls": [{"function": {
+                "name": "finish",
+                "arguments": {"message": "R2D_SUCCESS", "task_completed": True},
+            }}],
+        },
+        # 5. flat tool call (no "function" wrapper), unparseable arguments
+        {
+            "action": "finish", "source": "agent",
+            "tool_calls": [{"name": "finish", "arguments": '{"message": "R2D_SUCCESS'}],
+        },
+        # 6. buried in tool_call_metadata.model_response — the real 0.48 shape
+        {
+            "action": "finish", "source": "agent",
+            "tool_call_metadata": {"model_response": {"choices": [{"message": {
+                "tool_calls": [{"function": {
+                    "name": "finish",
+                    "arguments": '{"message": "R2D_SUCCESS", "task_completed": "true"}',
+                }}],
+            }}]}},
+        },
+    ]
+    for i, event in enumerate(shapes):
+        log = _openhands_log(tmp_path, [event])
+        assert log.result.outcome == "success", f"shape {i + 1} did not ground"
+
+    # Shapes that carry no marker must stay failed rather than raise.
+    for junk in (
+        {"action": "finish", "source": "agent"},
+        {"action": "finish", "source": "agent", "args": None, "message": None},
+        {"action": "finish", "source": "agent", "args": {"final_thought": 17}},
+        {"action": "finish", "source": "agent", "tool_calls": "not-a-list"},
+        {"action": "finish", "source": "agent",
+         "tool_calls": [{"function": {"name": "finish", "arguments": None}}]},
+    ):
+        assert _openhands_log(tmp_path, [junk]).result.outcome == "failed"
+
+
+def test_regression_259_finish_does_not_reopen_prompt_echo(tmp_path):
+    """Regression (#259, mirror image of class 16): reading the finish action
+    must not weaken the source filter. A user-sourced `finish` — the shape a
+    prompt echo or a replayed instruction would take — is still skipped, so
+    neither its R2D_SUCCESS nor its marker templates count.
+    """
+    log = _openhands_log(tmp_path, [
+        {
+            "action": "finish", "source": "user",
+            "message": "On success print exactly:\nR2D_SUCCESS",
+            "args": {"final_thought": "BLOCKED: <reason>", "task_completed": "true"},
+        },
+        {"action": "run", "source": "agent", "args": {"command": "ls"}},
+    ])
+    assert log.result.outcome == "failed"
+    assert log.result.blocked_reason is None
+    assert log.fixes == []
+
+
+def test_regression_259_finish_placeholders_are_rejected(tmp_path):
+    """Regression (#259): `_is_placeholder` still governs everything harvested
+    from a finish action. An agent that restates its instructions in the final
+    message ships un-filled `<...>` templates; they must not become a blocked
+    reason, a FIX, or an adjusted success command.
+    """
+    log = _openhands_log(tmp_path, [
+        {
+            "action": "finish", "source": "agent",
+            "message": "Here is how I would report problems:",
+            "args": {
+                "final_thought": (
+                    "FIX: <what you are changing> BECAUSE: <why it fails>\n"
+                    "BLOCKED: <reason>\n"
+                    "ADJUSTED_SUCCESS: <new command> EXPECT: <regex the output matches>"
+                ),
+                "task_completed": "false",
+            },
+        },
+    ])
+    assert log.result.outcome == "failed"
+    assert log.result.blocked_reason is None
+    assert log.adjusted_success_command is None
+    assert log.fixes == []
+
+    # Real values delivered through finish still parse.
+    log = _openhands_log(tmp_path, [
+        {
+            "action": "finish", "source": "agent",
+            "args": {"final_thought": "BLOCKED: the demo needs a GPU",
+                     "task_completed": "false"},
+        },
+    ])
+    assert log.result.outcome == "blocked"
+    assert log.result.blocked_reason == "the demo needs a GPU"
+
+
+def test_regression_259_task_completed_alone_is_not_success(tmp_path):
+    """Regression (#259): `task_completed: true` is the agent's own unverified
+    self-report — corroborating evidence, never proof. An agent can call finish
+    having failed, so a finish action with no R2D_SUCCESS anywhere must stay
+    "failed" no matter how confidently it claims completion.
+    """
+    for completed in ("true", True):
+        log = _openhands_log(tmp_path, [
+            {"action": "run", "source": "agent", "args": {"command": "go build ./..."}},
+            {"observation": "run", "source": "agent", "content": "build failed",
+             "extras": {"exit_code": 1}},
+            {
+                "action": "finish", "source": "agent",
+                "message": "All done! What's next on the agenda?",
+                "args": {"final_thought": "I could not get the build working.",
+                         "task_completed": completed},
+                "tool_calls": [{"function": {
+                    "name": "finish",
+                    "arguments": json.dumps(
+                        {"message": "Wrapping up.", "task_completed": completed}
+                    ),
+                }}],
+            },
+        ])
+        assert log.result.outcome == "failed"
+
+
+def test_regression_259_finish_ignores_non_finish_tool_arguments(tmp_path):
+    """Regression (#259): only the `finish` tool call's arguments are read. A
+    command the agent merely *intended* to run (`echo R2D_SUCCESS`) is a plan,
+    not an outcome — grounding never comes from a tool call's input.
+
+    Tool identification is default-DENY, so an UNNAMED call (the shape a
+    streamed tool call takes when the name arrived in an earlier delta) is
+    read only when the event itself is anchored to the finish tool via
+    `tool_call_metadata.function_name`.
+    """
+    named_other = _openhands_log(tmp_path, [
+        {
+            "action": "finish", "source": "agent",
+            "message": "Wrapping up without success.",
+            "tool_calls": [{"function": {
+                "name": "execute_bash",
+                "arguments": '{"command": "echo R2D_SUCCESS"}',
+            }}],
+        },
+    ])
+    assert named_other.result.outcome == "failed"
+
+    # Unnamed, unanchored: an anonymous payload never grounds on its own.
+    for anonymous in (
+        {"arguments": '{"command": "echo R2D_SUCCESS"}'},
+        {"name": None, "arguments": '{"command": "echo R2D_SUCCESS"}'},
+    ):
+        log = _openhands_log(tmp_path, [
+            {
+                "action": "finish", "source": "agent",
+                "message": "Wrapping up, the build never worked.",
+                "tool_call_metadata": {"model_response": {"choices": [
+                    {"message": {"tool_calls": [anonymous]}}
+                ]}},
+            },
+        ])
+        assert log.result.outcome == "failed"
+
+    # Same payload, but the event names the finish tool: now it is the
+    # agent's completion signal and the marker counts.
+    anchored = _openhands_log(tmp_path, [
+        {
+            "action": "finish", "source": "agent",
+            "message": "All done!",
+            "tool_call_metadata": {
+                "function_name": "finish",
+                "model_response": {"choices": [{"message": {"tool_calls": [
+                    {"arguments": '{"message": "R2D_SUCCESS"}'}
+                ]}}]},
+            },
+        },
+    ])
+    assert anchored.result.outcome == "success"
+
+
+def test_regression_259_adjusted_success_through_finish(tmp_path):
+    """Regression (#259): ADJUSTED_SUCCESS is the one extraction with teeth —
+    it rewrites plan.json's success command, which becomes the commands.sh
+    assertion and the guide's payoff step. Delivered through a finish action it
+    must parse exactly as it does from a message, and only when it is real.
+    """
+    log = _openhands_log(tmp_path, [
+        {"action": "run", "source": "agent", "args": {"command": "go build -o glow ."}},
+        {"observation": "run", "source": "agent", "content": "ok",
+         "extras": {"exit_code": 0}},
+        {
+            "action": "finish", "source": "agent",
+            "args": {
+                "final_thought": (
+                    "ADJUSTED_SUCCESS: ./glow --help EXPECT: Render markdown\n"
+                    "R2D_SUCCESS"
+                ),
+                "task_completed": "true",
+            },
+        },
+    ])
+    assert log.result.outcome == "success"
+    assert log.adjusted_success_command == "./glow --help"
+    assert log.adjusted_success_pattern == "Render markdown"
+
+
+def test_regression_259_finish_without_source_is_still_scanned(tmp_path):
+    """Regression (#259): the class-16 gate is a deny-list (`source == "user"`),
+    deliberately — a trajectory that drops or renames `source` must not silently
+    stop grounding, which is the very failure this issue fixed. Only OpenHands
+    itself emits `finish`, and it emits it for the agent, so a source-less
+    finish is scanned. Pinned so the choice stays deliberate.
+    """
+    log = _openhands_log(tmp_path, [
+        {"action": "finish", "args": {"final_thought": "R2D_SUCCESS"}},
+    ])
+    assert log.result.outcome == "success"
