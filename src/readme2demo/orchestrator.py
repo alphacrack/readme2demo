@@ -17,6 +17,7 @@ from rich.markup import escape
 from readme2demo import distill as distill_mod
 from readme2demo import ingest as ingest_mod
 from readme2demo import normalize as normalize_mod
+from readme2demo import produce as produce_mod
 from readme2demo import render as render_mod
 from readme2demo import tutorial as tutorial_mod
 from readme2demo import verify as verify_mod
@@ -290,6 +291,35 @@ class Orchestrator:
             tape_coverage=f"{coverage['tape_steps']}/{coverage['guide_steps']} guide steps",
         )
 
+    # -- post-render outputs ----------------------------------------------------
+
+    def _produce_formats(self) -> None:
+        """Dispatch the extra ``--formats`` outputs after the render stage (#230).
+
+        Runs on BOTH render paths — rendered and skipped — because the formats
+        gate is ``manifest.verified``, not whether a video was filmed, and an
+        unverified run must record *why* its extra formats were skipped.
+
+        Wrapped end to end: an optional output may never fail the run, so even a
+        failure outside a builder (a manifest write, a broken registry entry)
+        degrades to a printed warning. The four protected artifacts are already
+        on disk and produce() fingerprints them; nothing here can promote an
+        extra format into the grounding path.
+        """
+        try:
+            results = produce_mod.produce(self.run_dir, self.manifest, self.cfg)
+        except Exception as e:  # noqa: BLE001 — extra formats are never load-bearing
+            console.print(
+                "[yellow]Extra formats skipped: "
+                f"{escape(f'{type(e).__name__}: {e}')}[/]"
+            )
+            return
+        for name, status in results.items():
+            style = "dim" if status == produce_mod.PRODUCED else "yellow"
+            # escape(): builder errors carry arbitrary text (paths, shell
+            # output, regexes) that Rich would otherwise parse as markup.
+            console.print(f"[{style}]format {escape(name)}: {escape(status)}[/]")
+
     def _stage_tutorial(self) -> None:
         # Badge first: its verdict comes from manifest.verified alone (set
         # only by the verify stage), so it needs nothing from the LLM polish
@@ -346,6 +376,13 @@ class Orchestrator:
                     cost_usd=getattr(e, "cost_usd", 0.0),
                 )
                 raise
+
+            # Extra output formats hang off the END of render — after the
+            # protected artifacts exist and after the verified verdict is
+            # final. Deliberately OUTSIDE the try above: produce() must never
+            # be able to fail the render stage (#230).
+            if stage == "render":
+                self._produce_formats()
 
             # --dry-run: the feasibility verdict and blockers are known once
             # ingest completes; stop before any agent cost is spent and mark

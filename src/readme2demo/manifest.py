@@ -72,6 +72,12 @@ class Manifest(BaseModel):
     )
     verified: bool = False
     total_cost_usd: float = 0.0
+    # Extra output formats dispatched AFTER render by produce.produce (#230):
+    # name -> "produced" | "skipped: <reason>". Formats are not stages — they
+    # are absent from STAGES, are not resumable, and never gate the run — so
+    # they get their own field instead of a StageRecord. Defaults to empty, so
+    # manifests written before this field load unchanged.
+    formats: dict[str, str] = Field(default_factory=dict)
 
     # -- persistence ---------------------------------------------------------
 
@@ -152,6 +158,17 @@ class Manifest(BaseModel):
         rec.finished_at = utcnow()
         if reason:
             rec.meta["reason"] = reason
+        self.save()
+
+    # -- post-render outputs ---------------------------------------------------
+
+    def record_formats(self, results: dict[str, str]) -> None:
+        """Merge post-render format outcomes into the manifest and persist.
+
+        Merges rather than replaces so a ``resume`` that re-dispatches one
+        format does not erase what an earlier pass recorded for the others.
+        """
+        self.formats.update(results)
         self.save()
 
     def next_stage(self) -> Optional[str]:

@@ -41,9 +41,12 @@ flowchart TD
         R["VHS executes demo.tape for real<br/>→ demo.mp4 (+ 30s gif preview)<br/>duration gate: video ≥ tape lower bound"]
     end
 
+    P["produce — NOT a stage<br/>extra --formats builders, best-effort<br/>gated on verified · failure never fails the run<br/>protected artifacts fingerprinted before/after"]
+
     I -->|plan.json| A -->|transcript.ndjson| N -->|command_log.json| D
     D -->|commands.sh| V
     V -->|verified ✅| T --> R
+    R --> P
     V -.->|"unverified → render SKIPPED,<br/>docs labeled ⚠ UNVERIFIED"| T
     I -.->|"infeasible (creds/GPU/GUI)<br/>→ blocked report, $0.01 spent"| X["stop"]
 ```
@@ -125,6 +128,14 @@ sequenceDiagram
 | verify | `verify.py` | no | fresh container, zero agent state; the only source of "✅ verified" |
 | tutorial | `tutorial.py` | polish call | commands/outputs restored from verified data regardless of LLM output |
 | render | `render.py` | no | video duration must cover the tape; incomplete video = hard fail |
+
+Extra output formats are **not** stages. `produce.py` runs after the render
+stage (`orchestrator.run`), dispatches one builder per requested `--formats`
+entry, and is gated on `manifest.verified` exactly as render is. A builder that
+raises, is unimplemented, or mutates one of the four protected artifacts
+(`demo.mp4`, `step_by_step.md`, `commands.sh`, `demo.tape` — fingerprinted
+before and after each call) is recorded in `manifest.formats` as
+`skipped: <reason>` and never fails the run.
 
 Engines are plugins (`engines/base.py`): `claude-code` (default) and
 `openhands` (experimental) both normalize to the same `command_log.json` —
