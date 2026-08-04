@@ -5,6 +5,52 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] — 2026-07-31
+
+Fifteen commits of fixes and groundwork. The user-facing half is a batch of
+"the tool now tells you the truth" fixes; the rest is unwired plumbing the
+v0.8 multi-format work builds on.
+
+### Added
+- `-o` as a short alias for `--output-dir` (#132, thanks @ulises-jeremias).
+- `step_timestamps.json`: per-step `[start, end]` offsets on the tape clock,
+  written beside `tape_coverage.json` — YouTube chapter markers today, the
+  promo cut's segment source next (#231).
+- Brand-kit configuration (`brand_logo`, `brand_color`, `brand_font`) plus
+  pure ffmpeg drawtext helpers (#232).
+- A declarative `TTS_PROVIDERS` table mirroring `llm.PROVIDERS` — resolution
+  and preflight only, no audio generation (#213).
+- `classify_url`: a pure classifier telling a git repo URL from a hosted docs
+  page, unwired pending docs-site ingestion (#207).
+- `docs/dependencies.md` — the pinning policy, including why the sandbox
+  image's Claude Code pin is coupled to the stream-json parser (#219).
+
+### Fixed
+- `--dry-run` no longer demands the agent credential, the sandbox image, or
+  the Docker CLI — none of which it uses. The one command meant to be a cheap
+  feasibility check before committing a key was gated behind that key
+  (#221, closes #220).
+- `verify_retries` is honored as a retry count: `verify_retries=3` now means
+  four attempts, not two. Any value ≥ 1 previously collapsed to two
+  (#229, closes #45, thanks @Nitjsefnie).
+- Python inline regex flags are fully translated for `grep -E`: `(?is)` and
+  friends no longer reach the shell, and `(?x)` fails loudly at distill
+  instead of silently at verify (#214, closes #108).
+- Six CLI/orchestrator/llm errors now say what to do next, not just what
+  failed (#203, closes #198, thanks @MohammedAnasNathani).
+- Sandbox containers carry a `readme2demo=1` label, so containers leaked by a
+  hard kill can be reaped by label (#239, closes #238, thanks @foma-agent).
+- Image alt text is descriptive in the README, the examples gallery, and
+  generated tutorials (#216, closes #197).
+
+### Changed
+- DSL escaping helpers extracted to `escaping.py` — a zero-behavior move that
+  establishes the review pattern for splitting `distill.py` (#210, closes #195).
+- `SECURITY.md` restructured into a claims-vs-roadmap table with file
+  pointers, so no control is claimed that code doesn't enforce
+  (#205, closes #168 and #65, thanks @kevinnft).
+- `docs/usage.md` documents publishing `badge.json` for shields.io (#208).
+
 ## [0.7.4] — 2026-07-24
 
 ### Fixed

@@ -41,6 +41,7 @@ nav:
   - Configuration: configuration.md
   - How it works: how-it-works.md
   - Security model: security.md
+  - Dependency policy: dependencies.md
   - FAQ: faq.md
 
 # docs/step-by-step.md is a functional guide the self-demo runs against, not a
