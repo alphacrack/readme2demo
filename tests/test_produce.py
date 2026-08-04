@@ -62,16 +62,24 @@ def test_requested_formats_normalizes_case_dedupes_and_keeps_order():
     assert requested_formats(cfg) == ["gif", "demo", "promo"]
 
 
-def test_requested_formats_falls_back_when_config_has_no_formats_field():
-    """Regression (#230): the dispatch must not depend on #212 landing first.
+def test_requested_formats_defaults_to_the_render_stage_set():
+    """Regression (#230): a default config dispatches nothing.
 
-    ``Config.formats`` arrives with the --formats registry PR; until then the
-    selection falls back to today's exact output set, both of whose formats the
-    render stage owns — so produce() dispatches nothing at all.
+    #212 landed ``Config.formats`` defaulting to today's exact output set —
+    both formats the render stage owns — so produce() must find nothing left
+    to dispatch on an untouched config. (This test previously pinned a
+    getattr bridge for "before #212 lands"; the bridge is retired, the
+    guarantee it protected is not.)
     """
-    cfg = Config()
-    assert getattr(cfg, "formats", None) is None
-    assert requested_formats(cfg) == ["demo", "gif"]
+    assert Config().formats == ["demo", "gif"]
+    assert requested_formats(Config()) == ["demo", "gif"]
+
+
+def test_requested_formats_empty_selection_falls_back(tmp_path: Path):
+    """Regression (#230): an explicitly emptied selection must not mean
+    "dispatch nothing unknowingly" — it falls back to the render-stage set,
+    which produce() then filters out anyway."""
+    assert requested_formats(cfg_with_formats()) == ["demo", "gif"]
 
 
 def test_render_stage_formats_are_never_dispatched(tmp_path: Path):

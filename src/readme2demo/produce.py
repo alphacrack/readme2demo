@@ -132,12 +132,12 @@ def builder_for(name: str) -> Optional[FormatBuilder]:
 def requested_formats(cfg: Config) -> list[str]:
     """Format names this run asked for: lowercased, de-duplicated, order kept.
 
-    Reads ``cfg.formats`` (the ``--formats`` registry surface, #212) through
-    ``getattr`` so the dispatch also works against a config that predates that
-    field: the wiring must not depend on the flag PR landing first. Falls back
-    to :data:`DEFAULT_FORMATS`, which is today's exact output set.
+    Reads ``cfg.formats`` — the ``--formats`` registry surface landed in #212,
+    so the field is always present. An empty list still falls back to
+    :data:`DEFAULT_FORMATS`, today's exact output set, so a config that
+    explicitly clears the selection doesn't silently dispatch nothing.
     """
-    raw = getattr(cfg, "formats", None) or DEFAULT_FORMATS
+    raw = cfg.formats or DEFAULT_FORMATS
     names: list[str] = []
     seen: set[str] = set()
     for entry in raw:
