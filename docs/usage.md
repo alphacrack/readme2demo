@@ -61,6 +61,10 @@ directly instead of parsing output:
 readme2demo report runs/tool-20260702-... --json && echo "verified" || echo "gate failed"
 ```
 
+The human and `--markdown` reports show the final attempt's duration for each
+stage. `--json` includes the same value as numeric `duration_seconds` per
+stage; it is `null` when either timestamp is unavailable or invalid.
+
 ## Outputs
 
 Artifacts land in `runs/<run-id>/`: `tutorial.md`, `step_by_step.md`,
