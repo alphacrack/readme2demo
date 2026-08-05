@@ -872,5 +872,11 @@ def test_parse_formats_unit():
     assert parse_formats("DEMO,demo,gif") == ["demo", "gif"]
     with pytest.raises(FormatError, match="unknown"):
         parse_formats("banana")
+    # A declared-but-unbuilt format is rejected with its tracking issue.
+    # Deliberately NOT 'promo': that one is implemented as of the #230/#170
+    # wiring, and this assertion previously broke when it landed — pick a
+    # format that is genuinely still unbuilt.
     with pytest.raises(FormatError, match="not implemented"):
-        parse_formats("promo")
+        parse_formats("podcast")
+    # ...and the now-wired format is accepted.
+    assert parse_formats("promo") == ["promo"]
