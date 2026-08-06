@@ -10,6 +10,13 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+# Imported here to keep a single source of truth for the default model.
+# llm.py defines the canonical value; config imports it (no cycle: llm does not import config).
+try:
+    from readme2demo.llm import DEFAULT_ANTHROPIC_MODEL  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover — fallback for type-checking import order
+    DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"  # type: ignore[no-redef]
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover
@@ -37,7 +44,7 @@ class Config(BaseModel):
 
     # Agent engine
     engine: str = "claude-code"  # or "openhands" (used by --gemini/--openai/--anthropic)
-    model: str = "claude-sonnet-5"  # model for planner/distiller/tutorial LLM calls
+    model: str = DEFAULT_ANTHROPIC_MODEL  # model for planner/distiller/tutorial LLM calls
     llm_backend: str = "auto"  # auto | api | claude-cli | gemini | openai (presets set one; claude-cli = host `claude -p`, self-hosted only)
     max_turns: int = 60
     agent_timeout_s: int = 1500

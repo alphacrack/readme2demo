@@ -119,6 +119,9 @@ class ProviderSpec:
     extra: Optional[str] = None      # pip extra that carries the SDK, if any
 
 
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
+
+
 PROVIDERS: dict[str, ProviderSpec] = {
     "gemini": ProviderSpec(
         name="gemini", title="Gemini", backend="gemini",
@@ -139,7 +142,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
         name="anthropic", title="Anthropic", backend="api",
         key_env="ANTHROPIC_API_KEY", model_env="ANTHROPIC_MODEL",
         litellm_prefix="anthropic", model_prefixes=("claude",),
-        default_model="claude-sonnet-5",  # keep in sync with Config.model
+        default_model=DEFAULT_ANTHROPIC_MODEL,
     ),
 }
 
