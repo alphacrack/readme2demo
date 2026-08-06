@@ -185,9 +185,13 @@ def _generate_gif_preview(run_dir: Path, image: str, cfg: Config) -> None:
         f"/vhs/{GIF_PREVIEW}",
     ]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=300)
-    except (subprocess.TimeoutExpired, OSError):
-        pass
+        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=300)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        print(f"Warning: GIF preview generation failed ({exc}); mp4 is the primary artifact", flush=True)
+        return
+    if proc.returncode != 0:
+        tail = (proc.stderr or "")[-500:].strip()
+        print(f"Warning: ffmpeg GIF preview exited with {proc.returncode}: {tail}", flush=True)
 
 
 def _mp4_duration_s(path: Path, ffprobe: str) -> float | None:
