@@ -643,6 +643,23 @@ def _preflight(cfg: Config) -> None:
             problems.append(
                 "docker CLI not found on PATH — install Docker Desktop and retry."
             )
+        else:
+            import subprocess
+
+            try:
+                proc = subprocess.run(
+                    ["docker", "info"],
+                    capture_output=True,
+                    timeout=5,
+                )
+                if proc.returncode != 0:
+                    problems.append(
+                        "Docker daemon is not running — start Docker Desktop (or dockerd) and retry."
+                    )
+            except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+                problems.append(
+                    "Docker daemon is not running — start Docker Desktop (or dockerd) and retry."
+                )
 
     if problems:
         for p in problems:
