@@ -592,8 +592,8 @@ def report(
     raise typer.Exit(_report_exit_code(manifest))
 
 
-def _preflight(cfg: Config) -> None:
-    """Fail fast, before creating a run dir, if the environment can't work."""
+def _collect_preflight_problems(cfg: Config, verbose: bool = True) -> list[str]:
+    """Collect preflight problems without exiting — reusable by ``doctor`` and ``_preflight``."""
     import shutil
 
     from readme2demo import llm
@@ -602,35 +602,23 @@ def _preflight(cfg: Config) -> None:
     from readme2demo.llm import LLMError
 
     problems: list[str] = []
-
-    # LLM backend for the planner/distiller/tutorial passes. check_sdk and
-    # check_model make a missing/broken optional SDK or an unresolvable model
-    # a preflight error — a --openai run once burned its ingest stage on an
-    # ImportError instead. set_backend sits inside the try so a bad toml
-    # llm_backend is a clean ✗, not a traceback.
     try:
         llm.set_backend(cfg.llm_backend)
         backend = llm.resolve_backend()
         llm.check_sdk(backend)
         llm.check_model(backend, cfg.model)
-        console.print(f"[dim]LLM backend: {backend}[/]")
-        if backend == "claude-cli":
-            console.print(
-                "[dim]claude-cli backend: running on your Claude Code "
-                "subscription — supported for self-hosted runs (slower, and "
-                "subject to your plan's usage caps). For a hosted/multi-tenant "
-                "service use --llm-backend api; per Anthropic's terms, "
-                "subscription auth may not power a product for other users.[/]"
-            )
+        if verbose:
+            console.print(f"[dim]LLM backend: {backend}[/]")
+            if backend == "claude-cli":
+                console.print(
+                    "[dim]claude-cli backend: running on your Claude Code "
+                    "subscription — supported for self-hosted runs (slower, and "
+                    "subject to your plan's usage caps). For a hosted/multi-tenant "
+                    "service use --llm-backend api; per Anthropic's terms, "
+                    "subscription auth may not power a product for other users.[/]"
+                )
     except LLMError as e:
         problems.append(str(e))
-
-    # Agent engine auth (forwarded into the sandbox), sandbox image probe, and
-    # the Docker CLI are only exercised once the agent stage runs. A --dry-run
-    # stops after ingest/planning (never starts a sandbox, never touches
-    # Docker), so requiring them there would defeat the feature — its whole
-    # point is a cheap feasibility check before you commit a credential and a
-    # Docker environment. A real run still preflights all three.
     if not cfg.dry_run:
         try:
             engine = get_engine(cfg.engine)
@@ -638,19 +626,83 @@ def _preflight(cfg: Config) -> None:
             engine.check_image(cfg.base_image)
         except EngineError as e:
             problems.append(str(e))
-
         if shutil.which("docker") is None:
             problems.append(
                 "docker CLI not found on PATH — install Docker Desktop and retry."
             )
+    return problems
 
+
+def _preflight(cfg: Config) -> None:
+    """Fail fast, before creating a run dir, if the environment can't work."""
+    problems = _collect_preflight_problems(cfg, verbose=True)
     if problems:
         for p in problems:
-            # escape(): problem text may contain [bracketed] content (e.g.
-            # "pip install 'readme2demo[openai]'") that Rich would otherwise
-            # parse as markup and silently swallow.
             console.print(f"[red]✗[/] {escape(p)}")
         raise typer.Exit(2)
+
+
+@app.command()
+def doctor(
+    config_file: Path = typer.Option(
+        None, "--config", exists=True, dir_okay=False, resolve_path=True,
+        help="Path to readme2demo.toml",
+    ),
+) -> None:
+    """Check local setup: Docker, LLM backend/credential, and base image.
+
+    Prints a checklist and exits non-zero if any check fails. Useful before
+    your first real run — failures here would otherwise surface mid-pipeline.
+    """
+    cfg = _load_config(config_file)
+    problems = _collect_preflight_problems(cfg, verbose=False)
+
+    # Build checklist items from the same sources _preflight checks
+    import shutil
+
+    from readme2demo import llm
+
+    checks: list[tuple[str, bool, str]] = []
+
+    # LLM backend
+    try:
+        llm.set_backend(cfg.llm_backend)
+        backend = llm.resolve_backend()
+        llm.check_sdk(backend)
+        llm.check_model(backend, cfg.model)
+        checks.append((f"LLM backend ({backend})", True, f"model {cfg.model}"))
+    except Exception as e:  # noqa: BLE001
+        checks.append(("LLM backend", False, str(e)))
+
+    # Docker CLI
+    docker_ok = shutil.which("docker") is not None
+    checks.append(("Docker CLI", docker_ok, "found on PATH" if docker_ok else "not found — install Docker Desktop"))
+
+    # Base image (only when not dry_run, matches _preflight gating)
+    if not cfg.dry_run:
+        from readme2demo.engines import get_engine
+        from readme2demo.engines.base import EngineError
+
+        try:
+            engine = get_engine(cfg.engine)
+            engine.resolve_env()
+            engine.check_image(cfg.base_image)
+            checks.append((f"Base image ({cfg.base_image})", True, "available"))
+        except EngineError as e:
+            checks.append((f"Base image ({cfg.base_image})", False, str(e)))
+        except Exception as e:  # noqa: BLE001
+            checks.append((f"Base image ({cfg.base_image})", False, str(e)))
+
+    for name, ok, detail in checks:
+        mark = "[green]✓[/]" if ok else "[red]✗[/]"
+        console.print(f"{mark} {escape(name)}: {escape(detail)}")
+
+    if problems:
+        console.print("\n[red]Doctor found issues:[/]")
+        for p in problems:
+            console.print(f"[red]✗[/] {escape(p)}")
+        raise typer.Exit(1)
+    console.print("\n[green]Doctor: all checks passed.[/]")
 
 
 def _drive(orch: Orchestrator) -> None:
