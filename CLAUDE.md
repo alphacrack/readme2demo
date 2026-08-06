@@ -154,6 +154,36 @@ Each was found on a real run; each has code defenses and a regression test.
     messages, and the shared scanners (`claude_code._is_placeholder`) reject
     captures that are one whole un-filled `<...>` token — protecting
     claude-code too when a model restates its instructions verbatim.
+17. **Success assertion asserts the PLANNER's spelling, not the proven one** —
+    the distilled STEPS carry forms grounding proved (`python3`,
+    `--break-system-packages`, absolute exe paths), but the success-criteria
+    assertion emitted `plan.success_criteria.command` verbatim — a string the
+    planner wrote at ingest, before anything ran. readme2demo's own run
+    (readme2demo-20260806-180604) died on `readme2demo report examples/toolhive`
+    → `command not found`, exit 127, because pip put the console script in
+    `~/.local/bin` and that is not on PATH — while
+    `/home/demo/.local/bin/readme2demo report examples/toolhive` had exited 0
+    TWICE in the same log. Note this is NOT a grounding false-negative (class
+    5): `normalize_cmd` already canonicalizes absolute exe paths, so grounding
+    was correct — the emitted script was simply unrunnable. Defense:
+    `normalize.reconcile_success_command` swaps in the last literal the log
+    proves exited 0 and that `normalize_cmd` considers the same command.
+    **The lesson worth keeping is why that is not sufficient on its own:**
+    `normalize_cmd` is a SYMMETRIC equivalence, which is right for grounding
+    (both sides get the same lossy transform, so a false match needs two
+    independently drifted strings) but unsound when the winner is EXECUTED —
+    the transform is lossy in exactly the tokens that decide which program runs
+    (`/work/.venv/bin/pytest` → `pytest`, `python3` → `python`, dropped
+    `--break-system-packages`). So the swap is a one-way partial order
+    (`_at_least_as_specific`): only a literal equally or MORE specific than the
+    plan's own command may win. It also refuses `exit_code is None` (never
+    observed ≠ succeeded), any literal containing shell control characters
+    (a trailing `;` makes `$(cmd ; 2>&1)` exit 0 regardless — a false POSITIVE
+    on "verified"), and multi-line heredocs. Ordered AFTER
+    `mark_findings_success`, since findings entries are only proof once marked.
+    Whenever a grounding comparison starts being used to CHOOSE something to
+    run, re-derive its safety from scratch — comparison and execution are
+    different uses of the same normalizer.
 
 ## The maintenance meta-workflow (how every fix above happened)
 
