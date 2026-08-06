@@ -24,7 +24,7 @@ from readme2demo import verify as verify_mod
 from readme2demo.agent import run_agent
 from readme2demo.config import Config
 from readme2demo.engines import get_engine
-from readme2demo.manifest import Manifest, stage_duration, new_run_id
+from readme2demo.manifest import STAGES, Manifest, new_run_id, stage_duration
 from readme2demo.types import CommandLog, DistillOutput, Plan, TutorialOutline
 
 console = Console()
@@ -97,7 +97,7 @@ class Orchestrator:
         self.manifest.commit_sha = sha
         self.manifest.stage_complete("ingest", cost_usd=cost, feasible=plan.feasible)
         if not plan.feasible:
-            for s in ("agent", "normalize", "distill", "verify", "render", "tutorial"):
+            for s in STAGES[STAGES.index("agent") :]:
                 self.manifest.stage_skip(s, reason="plan marked infeasible")
             raise PipelineError(
                 "Planner marked this repo infeasible: "
@@ -201,7 +201,7 @@ class Orchestrator:
             guide_steps_unattempted=unattempted or None,
         )
         if log.result.outcome == "blocked":
-            for s in ("distill", "verify", "render", "tutorial"):
+            for s in STAGES[STAGES.index("distill") :]:
                 self.manifest.stage_skip(s, reason=log.result.blocked_reason or "blocked")
             raise PipelineError(f"Agent blocked: {log.result.blocked_reason}")
         if log.result.outcome == "failed":
@@ -391,7 +391,7 @@ class Orchestrator:
                 console.print(
                     "\n[bold yellow]ℹ Dry run: stopping after ingest/planning.[/]"
                 )
-                for s in ("agent", "normalize", "distill", "verify", "render", "tutorial"):
+                for s in STAGES[STAGES.index("agent") :]:
                     if self.manifest.stages[s].status != "completed":
                         self.manifest.stage_skip(s, reason="dry-run stop")
                 break
