@@ -295,3 +295,33 @@ class TestFormats:
         """Regression: unpassed --formats (None) must keep toml formats."""
         toml = _write_toml(tmp_path / "r2d.toml", 'formats = ["demo"]\n')
         assert Config.load(toml, formats=None).formats == ["demo"]
+
+
+class TestMissingTomlParser:
+    def test_toml_without_parser_warns_instead_of_silently_ignoring(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression (#39): on Python 3.10 without tomli, a readme2demo.toml the
+        user wrote was skipped with no hint why — their sandbox limits and
+        timeouts silently did not apply."""
+        from readme2demo import config as config_mod
+
+        monkeypatch.setattr(config_mod, "tomllib", None)
+        toml = tmp_path / "readme2demo.toml"
+        toml.write_text("max_turns = 7\n", encoding="utf-8")
+        with pytest.warns(UserWarning, match="no TOML parser is available"):
+            cfg = Config.load(toml)
+        assert cfg.max_turns == 60  # unapplied — but no longer silent
+
+    def test_toml_with_parser_does_not_warn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No warning on a healthy install — the branch must stay quiet for everyone."""
+        toml = tmp_path / "readme2demo.toml"
+        toml.write_text("max_turns = 7\n", encoding="utf-8")
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            cfg = Config.load(toml)
+        assert cfg.max_turns == 7

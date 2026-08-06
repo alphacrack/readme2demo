@@ -41,7 +41,7 @@ dependencies = [
     "pydantic>=2.7",
     "jinja2>=3.1",
     "anthropic>=0.34",
-    'tomli>=2.0; python_version < "3.11"',
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
