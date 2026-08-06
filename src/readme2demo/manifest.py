@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Order matters: the orchestrator executes stages in this sequence.
 # tutorial runs BEFORE render: step_by_step.md is finalized (with verified
@@ -29,6 +29,19 @@ MANIFEST_FILENAME = "manifest.json"
 PROTECTED_VERIFIED_ARTIFACTS = frozenset(
     {"commands.sh", "step_by_step.md", "demo.tape", "demo.mp4"}
 )
+
+
+def protected_verified_name(path: str) -> bool:
+    """True when the path's basename claims a verified artifact, by typo too."""
+    return Path(path).name.strip().lower() in PROTECTED_VERIFIED_ARTIFACTS
+
+
+def stage_index(stage: str) -> int | None:
+    """Return a stage's index, or None when it is unknown."""
+    try:
+        return STAGES.index(stage)
+    except ValueError:
+        return None
 
 
 def utcnow() -> str:
@@ -58,6 +71,22 @@ class DerivedArtifact(BaseModel):
     source_commit_sha: str
     produced_at: str
     note: str = ""
+
+    @field_validator("path")
+    @classmethod
+    def path_must_not_claim_verified(cls, value: str) -> str:
+        if protected_verified_name(value):
+            raise ValueError(
+                f"{value} is a verified artifact; derived artifacts may not use it"
+            )
+        return value
+
+    @field_validator("stage")
+    @classmethod
+    def stage_must_be_pipeline_stage(cls, value: str) -> str:
+        if value not in STAGES:
+            raise ValueError(f"Unknown derived-artifact stage: {value}")
+        return value
 
 
 def stage_duration(record: StageRecord) -> Optional[float]:
@@ -210,6 +239,8 @@ class Manifest(BaseModel):
         self.formats.update(results)
         self.save()
 
+    # -- derived artifacts ----------------------------------------------------
+
     def record_derived(
         self,
         *,
@@ -227,7 +258,7 @@ class Manifest(BaseModel):
         weaker claim than a fresh-container replay, so the contract refuses
         to let them inherit verified filenames.
         """
-        if path in PROTECTED_VERIFIED_ARTIFACTS:
+        if protected_verified_name(path):
             raise ValueError(
                 f"{path} is a verified artifact; derived artifacts may not use it"
             )
@@ -254,6 +285,8 @@ class Manifest(BaseModel):
             f"Derived from {repo} @ {sha7} by {artifact.tool} "
             f"{artifact.tool_version} on {date} — parsed, not executed."
         )
+
+    # -- format costs ---------------------------------------------------------
 
     def record_format_cost(self, name: str, cost_usd: float) -> None:
         """Account LLM spend a format builder incurred, and persist.
@@ -295,7 +328,8 @@ class Manifest(BaseModel):
         self.derived = [
             artifact
             for artifact in self.derived
-            if STAGES.index(artifact.stage) < idx
+            if (artifact_stage_index := stage_index(artifact.stage)) is None
+            or artifact_stage_index < idx
         ]
         self.save()
 

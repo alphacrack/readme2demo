@@ -5,6 +5,7 @@ helper that reconciles the positional repo, ``-gr/--github-repo``, and the
 ``-s/--step-by-step`` guide.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -485,7 +486,6 @@ def test_regression_report_keeps_bracketed_error_text(tmp_path):
     `pip install 'readme2demo'` because Rich swallowed the [openai] tag from
     the stage error. summarize output must be escaped before console.print.
     """
-    import json
 
     manifest_data = {
         "run_id": "glow-20260710-162012-33fc72",
@@ -509,7 +509,6 @@ def test_regression_report_json_with_recorded_stages(tmp_path):
     total_cost_usd / commit_sha values. (The old test used empty stages, so
     CI stayed green through the breakage.)
     """
-    import json
 
     manifest_data = {
         "run_id": "test-run-123",
@@ -537,7 +536,6 @@ def test_regression_report_json_with_recorded_stages(tmp_path):
 
 def test_report_json_includes_derived_list(tmp_path):
     """The JSON report must surface derived records next to verified."""
-    import json
 
     from readme2demo.manifest import Manifest
 
@@ -601,7 +599,7 @@ def test_report_markdown_includes_derived_section(tmp_path):
     result = runner.invoke(app, ["report", str(tmp_path), "--markdown"])
 
     assert result.exit_code == 1
-    assert "## Derived (parsed from source at abcdef1 — not executed)" in result.output
+    assert "## Derived (parsed from source — not executed)" in result.output
     assert "parsed, not executed." in result.output
 
 
@@ -614,7 +612,6 @@ def test_report_markdown_includes_derived_section(tmp_path):
 
 def _write_manifest(tmp_path, **overrides):
     """Write a minimal manifest.json into ``tmp_path`` and return the dir."""
-    import json
 
     data = {"run_id": "exitcode-test-run", **overrides}
     (tmp_path / "manifest.json").write_text(json.dumps(data))
@@ -687,7 +684,6 @@ def test_report_json_still_prints_full_payload_on_nonzero_exit(tmp_path):
         total_cost_usd=0.5,
         stages={"agent": {"status": "failed"}},
     )
-    import json
 
     result = runner.invoke(app, ["report", str(tmp_path), "--json"])
     assert result.exit_code == 2
@@ -701,7 +697,6 @@ def test_report_json_still_prints_full_payload_on_nonzero_exit(tmp_path):
 
 
 def test_report_markdown_emits_gfm_summary_with_present_artifacts(tmp_path):
-    import json
 
     manifest_data = {
         "run_id": "glow-20260710-162012-33fc72",
@@ -737,7 +732,6 @@ def test_report_markdown_emits_gfm_summary_with_present_artifacts(tmp_path):
 
 
 def test_report_markdown_table_survives_hostile_error_text(tmp_path):
-    import json
 
     manifest_data = {
         "run_id": "hostile-run",
@@ -762,7 +756,6 @@ def test_report_markdown_table_survives_hostile_error_text(tmp_path):
 
 
 def test_report_markdown_unverified_exit_1(tmp_path):
-    import json
 
     manifest_data = {
         "run_id": "unverified-run",
@@ -776,7 +769,6 @@ def test_report_markdown_unverified_exit_1(tmp_path):
 
 
 def test_report_json_and_markdown_are_mutually_exclusive(tmp_path):
-    import json
 
     (tmp_path / "manifest.json").write_text(json.dumps({"run_id": "x"}))
     result = runner.invoke(

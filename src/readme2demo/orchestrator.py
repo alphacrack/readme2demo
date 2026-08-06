@@ -423,11 +423,8 @@ def summarize(manifest: Manifest) -> str:
         lines.append(f"  {name:<10} {rec.status:<10} {duration:>8}{meta}{extra}")
     if manifest.derived:
         lines.append("")
+        lines.append("Derived (parsed from source — not executed)")
         for artifact in manifest.derived:
-            sha7 = artifact.source_commit_sha[:7]
-            lines.append(
-                f"Derived (parsed from source at {sha7} — not executed)"
-            )
             lines.append(f"  {artifact.path} — {manifest.derived_provenance_line(artifact)}")
     return "\n".join(lines)
 
@@ -489,10 +486,9 @@ def summarize_markdown(manifest: Manifest, artifacts: list[str]) -> str:
         lines += ["", "**Artifacts**", ""]
         lines += [f"- {name}" for name in artifacts]
     if manifest.derived:
-        heading_sha = manifest.derived[0].source_commit_sha[:7]
         lines += [
             "",
-            f"## Derived (parsed from source at {heading_sha} — not executed)",
+            "## Derived (parsed from source — not executed)",
             "",
         ]
         for artifact in manifest.derived:
