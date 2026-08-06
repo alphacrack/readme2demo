@@ -12,15 +12,65 @@ cp readme2demo.toml.example readme2demo.toml
 committed; `readme2demo.toml.example` is the tracked reference.
 
 ```toml
-engine = "claude-code"      # or "openhands" (experimental)
-model = "claude-sonnet-5"   # planner / distiller / tutorial passes
-llm_backend = "auto"        # auto | api | claude-cli | gemini | openai
+# Agent engine
+engine = "claude-code"        # or "openhands"
+model = "claude-sonnet-5"     # planner/distiller/tutorial passes
+llm_backend = "auto"          # auto | api | claude-cli | gemini | openai
 max_turns = 60
+agent_timeout_s = 1500
 budget_usd = 5.0
+
+# Sandbox
 base_image = "readme2demo/base:latest"
-formats = ["demo", "gif"]
+network = "bridge"
+memory = "4g"
+cpus = "2"
+pids_limit = 512
+allow_docker_socket = false  # SECURITY: mounts host Docker socket — trusted repos only
+
+# Stages
+dry_run = false
+verify_timeout_s = 900
+verify_retries = 1
+distill_retries = 1
 skip_video = false
+formats = ["demo", "gif"]  # demo, gif, promo (promo needs brand_logo/color/font)
+
+# Layout
+runs_dir = "runs"
+step_by_step = "path/to/guide.md"  # optional external guide (-s/--step-by-step)
+brand_logo = "assets/logo.png"      # optional: raster logo for promo/social cuts
+brand_color = "#7C6BF2"
+brand_font = "Arial"
 ```
+
+### All `Config` keys — defaults & purpose
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `engine` | `"claude-code"` | Agent engine (`claude-code` or `openhands`) |
+| `model` | `"claude-sonnet-5"` | Model for planner/distiller/tutorial LLM calls |
+| `llm_backend` | `"auto"` | LLM backend (`auto`/`api`/`claude-cli`/`gemini`/`openai`) |
+| `max_turns` | `60` | Max agent turns before timeout |
+| `agent_timeout_s` | `1500` | Agent wall-clock timeout (s) |
+| `budget_usd` | `5.0` | Abort if agent spend exceeds this (USD) |
+| `base_image` | `"readme2demo/base:latest"` | Sandbox base image (VHS + toolchains) |
+| `network` | `"bridge"` | Docker network for sandbox containers |
+| `memory` | `"4g"` | Container memory limit |
+| `cpus` | `"2"` | Container CPU limit |
+| `pids_limit` | `512` | Container PID limit |
+| `allow_docker_socket` | `false` | Mount host Docker socket (pierces isolation — trusted repos only) |
+| `dry_run` | `false` | Stop after ingest/planning (feasibility only) |
+| `verify_timeout_s` | `900` | Verify stage timeout (s) |
+| `verify_retries` | `1` | Plain-script retries before distiller feedback |
+| `distill_retries` | `1` | Distiller feedback loops on verify failure |
+| `skip_video` | `false` | Skip video render (tutorial + script only) |
+| `formats` | `["demo","gif"]` | Extra output formats (`demo`/`gif`/`promo`) |
+| `step_by_step` | `null` | Path to external step-by-step guide |
+| `runs_dir` | `"runs"` | Directory for run outputs |
+| `brand_logo` | `null` | Raster logo (`.png`/`.jpg`/`.jpeg`) for promo title/end cards |
+| `brand_color` | `"#7C6BF2"` | Hex accent (`#RRGGBB`) for promo drawtext |
+| `brand_font` | `null` | Font name for promo drawtext (resolved in container) |
 
 ## Authentication
 
