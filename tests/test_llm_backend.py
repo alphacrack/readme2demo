@@ -340,10 +340,13 @@ def test_regression_retired_gemini_default_404_in_ingest(monkeypatch):
 
 def test_anthropic_default_model_matches_config():
     # The only hardcoded preset fallback is Anthropic's, and it must stay in
-    # lockstep with the repo-wide config default.
+    # lockstep with the repo-wide config default — via shared constant, not
+    # duplicated literals.
     from readme2demo.config import Config
 
     assert llm.PROVIDERS["anthropic"].default_model == Config().model
+    # Identity, not just equality — fails the moment wiring breaks via fallback
+    assert Config().model is llm.DEFAULT_ANTHROPIC_MODEL
 
 
 @pytest.mark.parametrize(

@@ -10,12 +10,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-# Imported here to keep a single source of truth for the default model.
-# llm.py defines the canonical value; config imports it (no cycle: llm does not import config).
-try:
-    from readme2demo.llm import DEFAULT_ANTHROPIC_MODEL  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover — fallback for type-checking import order
-    DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"  # type: ignore[no-redef]
+from readme2demo.llm import DEFAULT_ANTHROPIC_MODEL
 
 if sys.version_info >= (3, 11):
     import tomllib
