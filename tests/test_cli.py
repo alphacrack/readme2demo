@@ -535,6 +535,76 @@ def test_regression_report_json_with_recorded_stages(tmp_path):
     assert {"name": "agent", "status": "failed", "duration_seconds": None} in parsed["stages"]
 
 
+def test_report_json_includes_derived_list(tmp_path):
+    """The JSON report must surface derived records next to verified."""
+    import json
+
+    from readme2demo.manifest import Manifest
+
+    manifest = Manifest.create(tmp_path, repo_url="https://github.com/owner/repo")
+    manifest.record_derived(
+        path="architecture.svg",
+        stage="ingest",
+        tool="codeflow",
+        tool_version="v1.2.3",
+        source_commit_sha="abcdef1234567890",
+    )
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--json"])
+
+    assert result.exit_code == 1  # unverified; derived records do not change it
+    parsed = json.loads(result.output)
+    assert parsed["verified"] is False
+    assert len(parsed["derived"]) == 1
+    assert parsed["derived"][0]["path"] == "architecture.svg"
+    assert parsed["derived"][0]["stage"] == "ingest"
+    assert parsed["derived"][0]["source_commit_sha"] == "abcdef1234567890"
+
+
+def test_report_exit_code_ignores_derived_records(tmp_path):
+    """Derived artifacts must never move the verified/unverified CI gate."""
+    from readme2demo.manifest import Manifest
+
+    manifest = Manifest.create(tmp_path)
+    manifest.record_derived(
+        path="architecture.svg",
+        stage="ingest",
+        tool="codeflow",
+        tool_version="v1",
+        source_commit_sha="a" * 40,
+    )
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--json"])
+    assert result.exit_code == 1
+
+    manifest.verified = True
+    manifest.stages["verify"].finished_at = "2026-08-06T12:00:00+00:00"
+    manifest.save()
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--json"])
+    assert result.exit_code == 0
+
+
+def test_report_markdown_includes_derived_section(tmp_path):
+    """The Markdown report must keep derived artifacts under their own heading."""
+    from readme2demo.manifest import Manifest
+
+    manifest = Manifest.create(tmp_path, repo_url="https://github.com/owner/repo")
+    manifest.record_derived(
+        path="architecture.svg",
+        stage="ingest",
+        tool="codeflow",
+        tool_version="v1.2.3",
+        source_commit_sha="abcdef1234567890",
+    )
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--markdown"])
+
+    assert result.exit_code == 1
+    assert "## Derived (parsed from source at abcdef1 — not executed)" in result.output
+    assert "parsed, not executed." in result.output
+
+
 # -- report exit codes (#85) --------------------------------------------------
 # Regression: `report` exited 0 unconditionally — the JSON branch via
 # `raise typer.Exit(0)`, the human branch by falling off the end — so a CI
