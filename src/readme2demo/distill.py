@@ -381,7 +381,7 @@ def _bare_cd(cmd: str) -> bool:
 
 
 def _dedup_success_command(
-    commands: list[str], criteria_command: str, log: "CommandLog | None" = None
+    commands: list[str], criteria_command: str, log: CommandLog | None = None
 ) -> list[str]:
     """Drop the setup step that duplicates the success command (#222).
 
@@ -420,7 +420,7 @@ def _dedup_success_command(
     return commands
 
 
-def _render_commands_sh(out: DistillOutput, plan: Plan, repo_url: str, log: "CommandLog | None" = None) -> str:
+def _render_commands_sh(out: DistillOutput, plan: Plan, repo_url: str, log: CommandLog | None = None) -> str:
     """Build the commands.sh text: header, clone preamble, commands, assertion.
 
     The clone preamble is harness-injected (not distilled): the agent never
@@ -488,7 +488,7 @@ def _render_commands_sh(out: DistillOutput, plan: Plan, repo_url: str, log: "Com
     return "\n".join(lines) + "\n"
 
 
-def write_commands_sh(out: DistillOutput, run_dir: Path, plan: Plan, repo_url: str, log: "CommandLog | None" = None) -> Path:
+def write_commands_sh(out: DistillOutput, run_dir: Path, plan: Plan, repo_url: str, log: CommandLog | None = None) -> Path:
     """Write the executable commands.sh (header + clone preamble + assertion)."""
     run_dir.mkdir(parents=True, exist_ok=True)
     script_path = run_dir / "commands.sh"
@@ -671,7 +671,7 @@ def write_outline(out: DistillOutput, run_dir: Path) -> Path:
     return dest
 
 
-def write_artifacts(out: DistillOutput, run_dir: Path, plan: Plan, repo_url: str, log: "CommandLog | None" = None) -> None:
+def write_artifacts(out: DistillOutput, run_dir: Path, plan: Plan, repo_url: str, log: CommandLog | None = None) -> None:
     """Composite writer: commands.sh + demo.tape (from out.tape) + outline."""
     write_commands_sh(out, run_dir, plan, repo_url, log)
     write_tape(out.tape, run_dir)
