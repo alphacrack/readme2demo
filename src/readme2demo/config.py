@@ -177,8 +177,16 @@ class Config(BaseModel):
         path = toml_path or Path("readme2demo.toml")
         if toml_path is not None and not path.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
-        if path.exists() and tomllib is not None:
-            with open(path, "rb") as f:
-                data.update(tomllib.load(f))
+        if path.exists():
+            if tomllib is not None:
+                with open(path, "rb") as f:
+                    data.update(tomllib.load(f))
+            else:
+                warnings.warn(
+                    f"Found {path} but no TOML parser is available — "
+                    "pip install tomli (Python <3.11) or upgrade to Python 3.11+",
+                    UserWarning,
+                    stacklevel=2,
+                )
         data.update({k: v for k, v in overrides.items() if v is not None})
         return cls(**data)
