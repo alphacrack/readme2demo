@@ -67,6 +67,7 @@ from readme2demo.distill import (
     normalize_cmd,
     parse_guide_steps,
 )
+from readme2demo import promo
 from readme2demo.types import CommandLog, Plan, PromoScene, PromoScript
 
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
@@ -76,16 +77,16 @@ _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 DEFAULT_TARGET_DURATION_S = 30.0
 
 #: Slack allowed when comparing durations that should agree exactly
-#: (``duration_s`` vs ``end_s - start_s``, ``total_duration_s`` vs the sum).
-#: Large enough for float/rounding drift, far too small to hide a fabricated
-#: scene length.
+#: (``duration_s`` vs ``end_s - start_s``). Large enough for float/rounding
+#: drift, far too small to hide a fabricated scene length.
 DURATION_TOLERANCE_S = 0.5
 
-#: How far past the requested target the scenes may total before it counts as a
-#: violation. Overshoot wastes the operator's budget and is worth a retry; an
-#: honest SHORT cut is not — failing that would pressure the model into padding
-#: the promo with footage the run never produced.
-MAX_TARGET_OVERSHOOT = 1.15
+# The budget check deliberately has NO constant of its own: it asks the
+# compositor's own pure predictor what this scene list will actually render to
+# and applies the preset's own one-sided tolerance, so the planner refuses
+# exactly what promo.validate_promo would refuse at render time — only for free,
+# before the paid retry and the ffmpeg pass. A private threshold here would
+# drift from the gate it exists to anticipate.
 
 #: Slack on the per-step window bounds. ``step_timestamps.json`` rounds every
 #: offset to 3 decimals, so an exact-boundary cut must not be a violation.
@@ -746,7 +747,8 @@ def collect_violations(
     log: CommandLog,
     timestamps: dict,
     plan: Optional[Plan] = None,
-    target_duration_s: float = 0.0,
+    style: str = promo.DEFAULT_STYLE,
+    preset: int = promo.DEFAULT_DURATION,
 ) -> list[str]:
     """Every rule ``script`` breaks (empty list = valid) — a PURE function.
 
@@ -761,9 +763,13 @@ def collect_violations(
     - **structure** — a non-positive ``duration_s``, a ``demo_segment`` whose
       ``duration_s`` disagrees with ``end_s - start_s`` or that carries on-screen
       ``text``, or a card without text (or with video offsets);
-    - **budget** — scenes totalling well past the requested target duration.
-      ``total_duration_s`` itself is NOT checked: it is derivable from the
-      scenes, so :func:`_normalize_total` recomputes it before this runs;
+    - **budget** — a scene list that will not FIT its duration preset even
+      after the compositor's speed ramp. Measured in the seconds the cut will
+      actually play, never the nominal sum: demo segments are sped up to fit
+      (:func:`promo.segment_pace`), so selecting 60s of verified footage for a
+      30s cut is correct behaviour, not an overrun. ``total_duration_s``
+      itself is NOT checked: it is derivable from the scenes, so
+      :func:`_normalize_total` recomputes it before this runs;
     - **evidence** — zero ``demo_segment`` scenes: a promo with no verified
       footage is rejected outright.
 
@@ -779,6 +785,11 @@ def collect_violations(
             gate STRICTER (the verified success command stops being an accepted
             source), never laxer — a caller who forgets it gets false rejections,
             not a hole.
+        style: promo style preset, as passed to the compositor. Defaults to the
+            compositor's own default rather than to a check-disabling sentinel:
+            like ``plan``, a caller who forgets it still gets the check.
+        preset: duration preset (15/30/60), as passed to the compositor. Same
+            fail-closed reasoning as ``style``.
     """
     steps = _steps_by_index(timestamps)
     total_s = _float(timestamps.get("total_min_s"))
@@ -812,14 +823,34 @@ def collect_violations(
     # Rejecting a plan over the model's arithmetic cost a real run its promo cut
     # (glow-20260805-181029: "total_duration_s (30.0) is not the sum (34.0)") —
     # and the message misdiagnosed the fault, so the retry was told to fix
-    # bookkeeping when the actual mistake was overshooting the budget, and it
-    # failed the same way. The budget is what the model can act on:
-    summed = sum(s.duration_s for s in script.scenes)
-    if target_duration_s and summed > target_duration_s * MAX_TARGET_OVERSHOOT:
+    # bookkeeping when the actual mistake was a budget it could not fit.
+    #
+    # What replaces it is measured in PLAYED seconds, not nominal ones. Demo
+    # segments are sped up to fit the budget, so a nominal-sum check refuses
+    # honest, footage-rich plans that render exactly on target — the same class
+    # of false rejection, in a new unit. Asking the compositor's own predictor
+    # means this fires only when the fit genuinely fails: the speed-up hit
+    # ``max_pace`` and the segments still overflow. One-sided for the reason
+    # validate_promo is one-sided — an honest SHORT cut must never be a
+    # violation, or the model learns to pad with footage the run never produced.
+    #
+    # A malformed scene (non-finite duration or span) makes the prediction
+    # meaningless; those scenes are already reported above, so the budget line
+    # is skipped rather than crashing or double-reporting.
+    try:
+        played_s = promo.expected_promo_duration_s(script, style=style, preset=preset)
+        budget_s = promo.duration_preset(preset).target_s
+        ceiling_s = budget_s + promo.duration_preset(preset).tolerance_s
+    except promo.PromoError:
+        return violations
+    if played_s > ceiling_s:
         violations.append(
-            f"the scenes total {round(summed, 1)}s but the cut targets "
-            f"{target_duration_s}s — drop a scene or narrow a span; never "
-            f"stretch a demo_segment past the window it actually plays"
+            f"this cut would run {round(played_s, 1)}s, past the {int(budget_s)}s "
+            f"budget's {round(ceiling_s, 1)}s limit, even after the speed-up that "
+            f"fits demo footage into the budget — the fixed cost is CARD time, so "
+            f"shorten or drop a card, or drop a demo_segment entirely. Never "
+            f"shrink a segment's [start_s, end_s] below the command it shows, and "
+            f"never stretch one past the window it actually plays"
         )
     return violations
 
@@ -914,7 +945,8 @@ def run_promo_script(
     timestamps: dict,
     model: str,
     repo_url: str = "",
-    target_duration_s: float = DEFAULT_TARGET_DURATION_S,
+    style: str = promo.DEFAULT_STYLE,
+    preset: int = promo.DEFAULT_DURATION,
 ) -> tuple[PromoScript, float]:
     """Plan the promo cut with one LLM pass, enforcing grounding in code.
 
@@ -929,7 +961,12 @@ def run_promo_script(
         timestamps: the parsed ``step_timestamps.json`` payload.
         model: model id for the LLM pass.
         repo_url: repository URL, for the title card (empty on guide-only runs).
-        target_duration_s: length the prompt asks the cut to aim for.
+        style: promo style preset. Pass the SAME pair the compositor will be
+            given: the budget violation is the compositor's own duration gate
+            evaluated early, so a mismatched pair would police a cut nobody
+            is going to render.
+        preset: duration preset (15/30/60); also the target the prompt asks
+            the cut to aim for.
 
     Returns:
         ``(validated script, total llm cost in USD)``.
@@ -948,6 +985,9 @@ def run_promo_script(
         )
 
     system = (_PROMPTS_DIR / "promo_script.md").read_text(encoding="utf-8")
+    # The preset IS the target the prompt states, so the number the model aims
+    # for and the budget the violation enforces cannot drift apart.
+    target_duration_s = promo.duration_preset(preset).target_s
     user = _build_user_message(
         plan, steps, repo_url, target_duration_s, _float(timestamps.get("total_min_s"))
     )
@@ -960,7 +1000,7 @@ def run_promo_script(
 
     script = _normalize_total(script)
     violations = collect_violations(
-        script, guide_text, log, timestamps, plan, target_duration_s
+        script, guide_text, log, timestamps, plan, style, preset
     )
     if violations:
         retry_user = (
@@ -978,7 +1018,7 @@ def run_promo_script(
         total_cost += cost
         script = _normalize_total(script)
         violations = collect_violations(
-            script, guide_text, log, timestamps, plan, target_duration_s
+            script, guide_text, log, timestamps, plan, style, preset
         )
         if violations:
             raise PromoScriptError(
