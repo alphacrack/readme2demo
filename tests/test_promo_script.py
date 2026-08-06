@@ -114,6 +114,66 @@ def make_script(timestamps: dict, index: int = 1) -> PromoScript:
     )
 
 
+# -- duration bookkeeping vs budget (#169, real run glow-20260805-181029) ------
+
+
+def test_regression_mismatched_total_duration_is_normalized_not_rejected() -> None:
+    """Regression (#169, run glow-20260805-181029): a real verified run lost its
+    promo cut to `total_duration_s (30.0) is not the sum (34.0)`.
+
+    total_duration_s is derivable from the scenes, so the code computes it
+    instead of asking the model for arithmetic and throwing away an otherwise
+    grounded plan. An off-by-anything total must normalize silently.
+    """
+    from readme2demo.promo_script import _normalize_total
+
+    ts = make_timestamps()
+    script = make_script(ts)
+    script.total_duration_s = 30.0  # the model's (wrong) arithmetic
+    real_sum = sum(sc.duration_s for sc in script.scenes)
+    assert real_sum != 30.0
+
+    normalized = _normalize_total(script)
+    assert normalized.total_duration_s == pytest.approx(real_sum)
+    assert collect_violations(normalized, GUIDE, make_log(), ts, make_plan()) == []
+
+
+def test_regression_scenes_overshooting_the_target_are_a_violation() -> None:
+    """Regression (#169): the model's REAL mistake in that run was overshooting
+    the budget, but the validator complained about bookkeeping — so the retry
+    was told to fix the wrong thing and failed identically. Overshoot is now
+    reported in terms the model can act on."""
+    ts = make_timestamps()
+    script = _long_script(ts, seconds=60.0)
+    violations = collect_violations(
+        script, GUIDE, make_log(), ts, make_plan(), target_duration_s=30.0
+    )
+    assert any("targets 30.0s" in v or "target" in v for v in violations), violations
+    assert not any("is not the sum" in v for v in violations)
+
+
+def test_a_short_cut_is_not_a_violation() -> None:
+    """Regression (#169): an honest SHORT cut must pass — failing it would
+    pressure the model into padding the promo with footage the run never
+    produced, which is the opposite of the point."""
+    ts = make_timestamps()
+    script = make_script(ts)  # well under a 30s target
+    assert collect_violations(
+        script, GUIDE, make_log(), ts, make_plan(), target_duration_s=30.0
+    ) == []
+
+
+def _long_script(timestamps: dict, seconds: float) -> PromoScript:
+    """A grounded script whose CARDS pad it past the budget (segments stay
+    honest — a segment may never claim more than the window it plays)."""
+    script = make_script(timestamps)
+    script.scenes[0].duration_s = seconds / 2
+    script.scenes[-1].duration_s = seconds / 2
+    from readme2demo.promo_script import _normalize_total
+
+    return _normalize_total(script)
+
+
 # -- eligibility + happy path ---------------------------------------------------
 
 
@@ -611,8 +671,13 @@ def test_inverted_and_missing_offsets_are_violations() -> None:
 
 def test_duration_and_card_structure_violations() -> None:
     """Regression (#169): durations must be positive and honest (a segment plays
-    exactly its span, and total_duration_s is the sum), and cards carry text
-    rather than video offsets."""
+    exactly its span), and cards carry text rather than video offsets.
+
+    Note what is NOT asserted: a ``total_duration_s`` disagreeing with the sum.
+    That check was removed after run glow-20260805-181029 lost a promo cut to
+    it — the total is derivable, so the code normalizes it. The per-scene
+    honesty check below is the one that protects grounding, and it stays.
+    """
     ts = make_timestamps()
     script = make_script(ts)
     script.scenes[1].duration_s = 99.0  # no longer end_s - start_s
@@ -622,7 +687,7 @@ def test_duration_and_card_structure_violations() -> None:
     assert any("does not match" in v for v in violations)
     assert any("needs non-empty on-screen `text`" in v for v in violations)
     assert any("must leave step_index/start_s/end_s null" in v for v in violations)
-    assert any("is not the sum of the scene durations" in v for v in violations)
+    assert not any("is not the sum" in v for v in violations)
 
     zero = make_script(ts)
     zero.scenes[0].duration_s = 0.0

@@ -81,6 +81,12 @@ DEFAULT_TARGET_DURATION_S = 30.0
 #: scene length.
 DURATION_TOLERANCE_S = 0.5
 
+#: How far past the requested target the scenes may total before it counts as a
+#: violation. Overshoot wastes the operator's budget and is worth a retry; an
+#: honest SHORT cut is not — failing that would pressure the model into padding
+#: the promo with footage the run never produced.
+MAX_TARGET_OVERSHOOT = 1.15
+
 #: Slack on the per-step window bounds. ``step_timestamps.json`` rounds every
 #: offset to 3 decimals, so an exact-boundary cut must not be a violation.
 BOUNDS_TOLERANCE_S = 0.05
@@ -740,6 +746,7 @@ def collect_violations(
     log: CommandLog,
     timestamps: dict,
     plan: Optional[Plan] = None,
+    target_duration_s: float = 0.0,
 ) -> list[str]:
     """Every rule ``script`` breaks (empty list = valid) — a PURE function.
 
@@ -753,8 +760,10 @@ def collect_violations(
       the end of the video, or outside the referenced step's own window;
     - **structure** — a non-positive ``duration_s``, a ``demo_segment`` whose
       ``duration_s`` disagrees with ``end_s - start_s`` or that carries on-screen
-      ``text``, a card without text (or with video offsets), or a
-      ``total_duration_s`` that is not the sum of the scenes;
+      ``text``, or a card without text (or with video offsets);
+    - **budget** — scenes totalling well past the requested target duration.
+      ``total_duration_s`` itself is NOT checked: it is derivable from the
+      scenes, so :func:`_normalize_total` recomputes it before this runs;
     - **evidence** — zero ``demo_segment`` scenes: a promo with no verified
       footage is rejected outright.
 
@@ -798,13 +807,35 @@ def collect_violations(
             "rejected — at least one scene must replay a step the fresh "
             "container executed"
         )
+    # total_duration_s is deliberately NOT validated here: it is derivable from
+    # the scenes, and :func:`_normalize_total` recomputes it before this runs.
+    # Rejecting a plan over the model's arithmetic cost a real run its promo cut
+    # (glow-20260805-181029: "total_duration_s (30.0) is not the sum (34.0)") —
+    # and the message misdiagnosed the fault, so the retry was told to fix
+    # bookkeeping when the actual mistake was overshooting the budget, and it
+    # failed the same way. The budget is what the model can act on:
     summed = sum(s.duration_s for s in script.scenes)
-    if abs(summed - script.total_duration_s) > DURATION_TOLERANCE_S:
+    if target_duration_s and summed > target_duration_s * MAX_TARGET_OVERSHOOT:
         violations.append(
-            f"total_duration_s ({script.total_duration_s}) is not the sum of the "
-            f"scene durations ({round(summed, 3)})"
+            f"the scenes total {round(summed, 1)}s but the cut targets "
+            f"{target_duration_s}s — drop a scene or narrow a span; never "
+            f"stretch a demo_segment past the window it actually plays"
         )
     return violations
+
+
+def _normalize_total(script: PromoScript) -> PromoScript:
+    """Recompute ``total_duration_s`` from the scenes — the scenes are truth.
+
+    The field is pure bookkeeping, so the code derives it rather than asking
+    the model for arithmetic and rejecting an otherwise-grounded plan when the
+    two disagree. Grounding is untouched: every per-scene check (span inside
+    the step's own window, ``duration_s == end_s - start_s``, at least one
+    verified ``demo_segment``, card text backed by the run) still runs and
+    still rejects.
+    """
+    script.total_duration_s = round(sum(s.duration_s for s in script.scenes), 3)
+    return script
 
 
 # -- LLM pass -----------------------------------------------------------------
@@ -927,7 +958,10 @@ def run_promo_script(
     )
     total_cost += cost
 
-    violations = collect_violations(script, guide_text, log, timestamps, plan)
+    script = _normalize_total(script)
+    violations = collect_violations(
+        script, guide_text, log, timestamps, plan, target_duration_s
+    )
     if violations:
         retry_user = (
             f"{user}\n\n"
@@ -942,7 +976,10 @@ def run_promo_script(
             system=system, user=retry_user, model=model, schema=PromoScript
         )
         total_cost += cost
-        violations = collect_violations(script, guide_text, log, timestamps, plan)
+        script = _normalize_total(script)
+        violations = collect_violations(
+            script, guide_text, log, timestamps, plan, target_duration_s
+        )
         if violations:
             raise PromoScriptError(
                 "Promo script still violated the grounding rules after retry: "
