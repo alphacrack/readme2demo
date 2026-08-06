@@ -157,6 +157,8 @@ def test_infeasible_plan_stops_pipeline(tmp_path: Path, monkeypatch):
     assert orch.manifest.stages["ingest"].status == "failed"
     assert orch.manifest.stages["agent"].status == "skipped"
     assert orch.manifest.stages["tutorial"].status == "skipped"
+    # Regression (#46): EVERY stage after ingest is skipped, derived from STAGES
+    assert [s for s in STAGES[1:] if orch.manifest.stages[s].status != "skipped"] == []
 
 
 def test_blocked_agent_skips_downstream(tmp_path: Path, monkeypatch):
@@ -191,6 +193,8 @@ def test_blocked_agent_skips_downstream(tmp_path: Path, monkeypatch):
         orch.run()
     assert orch.manifest.stages["distill"].status == "skipped"
     assert orch.manifest.stages["render"].status == "skipped"
+    # Regression (#46): downstream from distill
+    assert [s for s in STAGES[STAGES.index("distill"):] if orch.manifest.stages[s].status != "skipped"] == []
 
 
 def test_resume_skips_completed_stages(tmp_path: Path, monkeypatch):
@@ -288,7 +292,7 @@ def test_dry_run_stops_after_ingest(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ingest_mod, "ingest", fake_ingest)
     manifest = orch.run()
     assert manifest.stages["ingest"].status == "completed"
-    for s in ("agent", "normalize", "distill", "verify", "render", "tutorial"):
+    for s in STAGES[STAGES.index("agent") :]:
         assert manifest.stages[s].status == "skipped"
         assert manifest.stages[s].meta.get("reason") == "dry-run stop"
     assert manifest.verified is False
