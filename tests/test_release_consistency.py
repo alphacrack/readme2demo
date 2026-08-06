@@ -26,7 +26,7 @@ def test_release_consistency() -> None:
     cff_text = (root / "CITATION.cff").read_text(encoding="utf-8")
     m_cff = re.search(r"^version:\s*(\S+)", cff_text, re.MULTILINE)
     assert m_cff, "version not found in CITATION.cff"
-    cff_version = m_cff.group(1).strip()
+    cff_version = m_cff.group(1).strip().strip("\"'")
 
     assert cff_version == py_version, (
         f"CITATION.cff has {cff_version} but pyproject.toml has {py_version} — bump both together"
