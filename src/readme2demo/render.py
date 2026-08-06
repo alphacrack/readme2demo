@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 from .config import Config
+from .sandbox import DOCKER_NOT_FOUND_MSG
 
 _SLEEP_RE = re.compile(r"^Sleep\s+([\d.]+)(ms|s)\s*$", re.MULTILINE)
 _TYPE_RE = re.compile(r"^Type\s+(.+)$", re.MULTILINE)
@@ -22,6 +23,8 @@ _TYPING_SPEED_RE = re.compile(r"^Set\s+TypingSpeed\s+([\d.]+)ms", re.MULTILINE)
 #: Hard wall-clock limit for one VHS render (seconds). Generous: the tape
 #: executes the FULL step_by_step.md — clones, installs, and builds included.
 RENDER_TIMEOUT_S = 1800
+_CHECK_TIMEOUT_S = 120
+_GIF_TIMEOUT_S = 300
 
 #: VHS renders only demo.mp4 (rendering a multi-minute GIF at full size once
 #: filled the Docker VM disk — every frame is a PNG). demo.gif is a short
@@ -75,12 +78,12 @@ def check_render_image(image: str) -> None:
     try:
         proc = subprocess.run(
             ["docker", "run", "--rm", "--entrypoint", "sh", image, "-c", probe],
-            capture_output=True, text=True, errors="replace", timeout=120,
+            capture_output=True, text=True, errors="replace", timeout=_CHECK_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired as e:
         raise RenderError(f"probe of render image {image} timed out") from e
     except FileNotFoundError as e:
-        raise RenderError("docker CLI not found — install Docker and ensure it is on PATH") from e
+        raise RenderError(DOCKER_NOT_FOUND_MSG) from e
     if proc.returncode != 0:
         raise RenderError(
             f"Render image {image!r} is missing vhs/ttyd/ffmpeg/git — it is "
@@ -155,7 +158,7 @@ def run_render(run_dir: Path, cfg: Config, image: str | None = None) -> list[Pat
             f"VHS render timed out after {RENDER_TIMEOUT_S}s (image {image or cfg.base_image})"
         ) from e
     except FileNotFoundError as e:
-        raise RenderError("docker CLI not found — install Docker and ensure it is on PATH") from e
+        raise RenderError(DOCKER_NOT_FOUND_MSG) from e
 
     if proc.returncode != 0:
         tail = ((proc.stdout or "") + (proc.stderr or ""))[-2000:]
@@ -185,7 +188,7 @@ def _generate_gif_preview(run_dir: Path, image: str, cfg: Config) -> None:
         f"/vhs/{GIF_PREVIEW}",
     ]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=300)
+        subprocess.run(cmd, capture_output=True, timeout=_GIF_TIMEOUT_S)
     except (subprocess.TimeoutExpired, OSError):
         pass
 
