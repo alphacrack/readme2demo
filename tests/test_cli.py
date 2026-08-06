@@ -705,6 +705,54 @@ def test_report_markdown_unverified_exit_1(tmp_path):
     assert "**Verified: NO**" in result.output
 
 
+def test_report_missing_manifest_shows_friendly_error(tmp_path):
+    """Regression (#38): missing manifest.json must be ✗, not traceback."""
+    from typer.testing import CliRunner
+    from readme2demo.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["report", str(tmp_path)])
+    assert result.exit_code == 2
+    assert "No manifest.json found" in result.output
+    assert "Traceback" not in result.output
+
+def test_report_corrupt_manifest_shows_friendly_error(tmp_path):
+    """Regression (#38): corrupt manifest.json must be ✗, not traceback."""
+    from typer.testing import CliRunner
+    from readme2demo.cli import app
+
+    (tmp_path / "manifest.json").write_text("{not json", encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(app, ["report", str(tmp_path)])
+    assert result.exit_code == 2
+    assert "is corrupt" in result.output
+    assert "Traceback" not in result.output
+
+def test_report_path_pointing_at_file_shows_friendly_error(tmp_path):
+    """Regression (#38): path pointing at file (NotADirectoryError) must be ✗."""
+    from typer.testing import CliRunner
+    from readme2demo.cli import app
+
+    f = tmp_path / "manifest.json"
+    f.write_text("{}", encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(app, ["report", str(f)])
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+
+def test_report_bracketed_path_is_escaped(tmp_path):
+    """Regression (#38): bracketed path must not be swallowed by Rich markup (class 15)."""
+    from typer.testing import CliRunner
+    from readme2demo.cli import app
+
+    bad = tmp_path / "run [old] dir"
+    bad.mkdir()
+    runner = CliRunner()
+    result = runner.invoke(app, ["report", str(bad)])
+    assert result.exit_code == 2
+    assert "[old]" in result.output or "run" in result.output
+    assert "Traceback" not in result.output
+
 def test_report_json_and_markdown_are_mutually_exclusive(tmp_path):
     import json
 

@@ -111,9 +111,16 @@ class Manifest(BaseModel):
         try:
             raw = json.loads(manifest_path.read_text())
         except FileNotFoundError:
-            raise FileNotFoundError(f"No manifest.json found in {run_dir} — is this a readme2demo run directory?")
+            raise FileNotFoundError(
+                f"No manifest.json found in {run_dir} — "
+                "is this a readme2demo run directory?"
+            ) from None
+        except OSError as e:
+            raise OSError(f"Could not read manifest.json in {run_dir}: {e}") from None
         except json.JSONDecodeError as e:
-            raise ValueError(f"manifest.json in {run_dir} is corrupt ({e}): delete it or re-run")
+            raise ValueError(
+                f"manifest.json in {run_dir} is corrupt ({e}): delete it or re-run"
+            ) from None
         m = cls.model_validate(raw)
         m._run_dir = run_dir
         return m

@@ -511,8 +511,8 @@ def resume(
     _preflight(cfg)
     try:
         orch = Orchestrator.resume(run_dir, cfg, from_stage=from_stage)
-    except (FileNotFoundError, ValueError) as e:
-        console.print(f"[red]✗ {e}[/]")
+    except (OSError, ValueError) as e:
+        console.print(f"[red]✗ {escape(str(e))}[/]")
         raise typer.Exit(2)
     _drive(orch)
 
@@ -568,8 +568,8 @@ def report(
         raise typer.BadParameter("--json and --markdown are mutually exclusive")
     try:
         manifest = Manifest.load(run_dir)
-    except (FileNotFoundError, ValueError) as e:
-        console.print(f"[red]✗ {e}[/]")
+    except (OSError, ValueError) as e:
+        console.print(f"[red]✗ {escape(str(e))}[/]")
         raise typer.Exit(2)
     if markdown_output:
         # The renderer is pure; the CLI owns the filesystem side. Existence
