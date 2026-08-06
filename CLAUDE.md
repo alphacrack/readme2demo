@@ -155,6 +155,26 @@ Each was found on a real run; each has code defenses and a regression test.
     captures that are one whole un-filled `<...>` token — protecting
     claude-code too when a model restates its instructions verbatim.
 
+18. **ffmpeg drawtext escape depth is per-character** — the promo compositor
+    burned card text in via `drawtext=text=...`, escaping every metacharacter
+    with ONE backslash. ffmpeg unescapes a `-filter_complex` value in more than
+    one pass, so the depth depends on which pass consumes the character:
+    `, ; [ ]` (outer/graph) need 1, `:` (inner/option) needs 2, `'` needs 3,
+    `\` needs 4. The three failure modes are what makes this vicious — only the
+    first is loud: too few on `:` makes ffmpeg reject the whole option ("Error
+    parsing global options: Invalid argument", no frame); too few on `'`
+    renders the card BLANK; too few on `\` silently drops it from the text.
+    `%` is not an escaping problem at all — it is drawtext TEMPLATE EXPANSION,
+    fixed with `expansion=none` (which also stops an LLM-authored `%{gmtime}`
+    from being evaluated into a published video). Found by
+    readme2demo-20260806-184032, whose promo died on `Try it: readme2demo
+    report examples/toolhive`. **The process lesson: every pre-existing test
+    asserted the ESCAPER'S OUTPUT and none asserted what ffmpeg does with it,
+    so a full green suite coexisted with an unrenderable promo.** Escaping
+    changes must be closed against a rendered frame from the base image's own
+    ffmpeg — `tests/test_brand.py::TestDrawtextEscapingContract` keeps the
+    property (unescaping in ffmpeg's order returns the author's text).
+
 ## The maintenance meta-workflow (how every fix above happened)
 
 1. Read the run dir: `manifest.json` → failing stage; `verify.log` tail;
