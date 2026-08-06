@@ -185,13 +185,30 @@ def _generate_gif_preview(run_dir: Path, image: str, cfg: Config) -> None:
         f"/vhs/{GIF_PREVIEW}",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=300)
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        print(f"Warning: GIF preview generation failed ({exc}); mp4 is the primary artifact", flush=True)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, errors="replace", timeout=300
+        )
+    except subprocess.TimeoutExpired:
+        # Fixed string — TimeoutExpired dumps full docker argv (250+ chars) via str(exc)
+        print(
+            "Warning: GIF preview timed out after 300s; mp4 is the primary artifact",
+            flush=True,
+        )
+        return
+    except OSError as exc:
+        print(
+            f"Warning: GIF preview generation failed ({exc}); "
+            "mp4 is the primary artifact",
+            flush=True,
+        )
         return
     if proc.returncode != 0:
         tail = (proc.stderr or "")[-500:].strip()
-        print(f"Warning: ffmpeg GIF preview exited with {proc.returncode}: {tail}", flush=True)
+        # plain print(): ffmpeg stderr contains [brackets] that Rich markup would eat
+        print(
+            f"Warning: ffmpeg GIF preview exited with {proc.returncode}: {tail}",
+            flush=True,
+        )
 
 
 def _mp4_duration_s(path: Path, ffprobe: str) -> float | None:
