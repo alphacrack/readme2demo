@@ -25,6 +25,7 @@ _TYPING_SPEED_RE = re.compile(r"^Set\s+TypingSpeed\s+([\d.]+)ms", re.MULTILINE)
 RENDER_TIMEOUT_S = 1800
 _CHECK_TIMEOUT_S = 120
 _GIF_TIMEOUT_S = 300
+_FFPROBE_TIMEOUT_S = 60
 
 #: VHS renders only demo.mp4 (rendering a multi-minute GIF at full size once
 #: filled the Docker VM disk — every frame is a PNG). demo.gif is a short
@@ -206,7 +207,7 @@ def _mp4_duration_s(path: Path, ffprobe: str) -> float | None:
             capture_output=True,
             text=True,
             errors="replace",
-            timeout=60,
+            timeout=_FFPROBE_TIMEOUT_S,
         )
     except (subprocess.TimeoutExpired, OSError):
         return None

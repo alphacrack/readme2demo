@@ -110,9 +110,7 @@ class Sandbox:
                 partial = e.stdout if isinstance(e.stdout, str) else e.stdout.decode(errors="replace")
             return ExecResult(124, partial + "\n[readme2demo] TIMEOUT")
         except FileNotFoundError as e:  # docker not installed
-            raise SandboxError(
-                "docker CLI not found — install Docker and ensure it is on PATH"
-            ) from e
+            raise SandboxError(DOCKER_NOT_FOUND_MSG) from e
 
     # -- lifecycle -----------------------------------------------------------
 
