@@ -509,7 +509,11 @@ def resume(
         )
     cfg = _apply_engine_image(cfg)
     _preflight(cfg)
-    orch = Orchestrator.resume(run_dir, cfg, from_stage=from_stage)
+    try:
+        orch = Orchestrator.resume(run_dir, cfg, from_stage=from_stage)
+    except (FileNotFoundError, ValueError) as e:
+        console.print(f"[red]✗ {e}[/]")
+        raise typer.Exit(2)
     _drive(orch)
 
 
@@ -562,7 +566,11 @@ def report(
     """
     if json_output and markdown_output:
         raise typer.BadParameter("--json and --markdown are mutually exclusive")
-    manifest = Manifest.load(run_dir)
+    try:
+        manifest = Manifest.load(run_dir)
+    except (FileNotFoundError, ValueError) as e:
+        console.print(f"[red]✗ {e}[/]")
+        raise typer.Exit(2)
     if markdown_output:
         # The renderer is pure; the CLI owns the filesystem side. Existence
         # checks only — never parse other run files, so partial runs report.
