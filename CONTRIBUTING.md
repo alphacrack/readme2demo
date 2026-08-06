@@ -15,6 +15,7 @@ and understanding it will make every review go smoothly:
 git clone https://github.com/alphacrack/readme2demo && cd readme2demo
 pip install -e ".[dev]"
 python -m pytest tests/ -q        # fast: no docker, network, or API keys needed
+./scripts/dev-check.sh        # same checks PR CI runs (ruff + pytest)
 docker build -t readme2demo/base:latest images/base/   # needed for real runs
 ```
 
