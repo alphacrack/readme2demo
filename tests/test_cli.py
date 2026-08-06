@@ -415,6 +415,55 @@ def test_regression_dry_run_preflight_skips_engine_auth_and_docker(monkeypatch, 
     assert "docker CLI not found" not in out
 
 
+def test_regression_docker_daemon_down_fails_preflight(monkeypatch, capsys) -> None:
+    """Regression (#14): daemon down must fail preflight with actionable message."""
+    import subprocess as _sp
+
+    from readme2demo import cli as cli_mod
+    from readme2demo import llm
+    from readme2demo.config import Config
+
+    class _FakeEngine:
+        def resolve_env(self) -> None:
+            return None
+        def check_image(self, image: str) -> None:
+            return None
+
+    monkeypatch.setattr(llm, "check_sdk", lambda b: None)
+    monkeypatch.setattr(llm, "check_model", lambda b, m: None)
+    monkeypatch.setattr("readme2demo.engines.get_engine", lambda name: _FakeEngine())
+    import shutil as _shutil
+    monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else "/usr/bin/claude")
+
+    def _fake_run(*a: object, **kw: object) -> object:
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "failed to connect to the docker API at unix:///var/run/docker.sock"
+        return R()
+
+    monkeypatch.setattr(_sp, "run", _fake_run)
+    import typer as _typer
+    with __import__("pytest").raises(_typer.Exit) as exc:
+        cli_mod._preflight(Config(dry_run=False))
+    assert exc.value.exit_code == 2
+    assert "Docker is not usable" in capsys.readouterr().out
+
+
+def test_regression_docker_daemon_down_not_checked_in_dry_run(monkeypatch, capsys) -> None:
+    """Regression (#14): daemon probe must not run under dry_run=True."""
+    from readme2demo import cli as cli_mod
+    from readme2demo import llm
+    from readme2demo.config import Config
+    import shutil as _shutil
+
+    # dry-run must not touch docker at all
+    monkeypatch.setattr(_shutil, "which", lambda name: (_ for _ in ()).throw(AssertionError("docker probe must not run in dry-run")) if name == "docker" else "/usr/bin/claude")
+    monkeypatch.setattr(llm, "check_sdk", lambda b: None)
+    monkeypatch.setattr(llm, "check_model", lambda b, m: None)
+    cli_mod._preflight(Config(dry_run=True))  # must NOT raise
+
+
 def test_non_dry_run_still_requires_engine_credential(monkeypatch, capsys):
     """The dry-run skip must not weaken a real run: without the credential a
     non-dry-run preflight still fails (#220)."""
