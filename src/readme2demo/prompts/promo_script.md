@@ -15,7 +15,7 @@ Respond with ONLY a JSON object matching this schema (PromoScript):
 ```
 {
   "version": 1,
-  "total_duration_s": <number>,        // must equal the sum of every scene's duration_s
+  "total_duration_s": <number>,        // approximate; the tool recomputes it from your scenes
   "scenes": [
     {
       "kind": "title_card" | "demo_segment" | "end_card",
@@ -34,11 +34,11 @@ Respond with ONLY a JSON object matching this schema (PromoScript):
 1. **Footage grounding.** Every `demo_segment` MUST set `step_index` to an `index` from the VERIFIED STEPS table below. Those are the steps that appear in the published `step_by_step.md` AND succeeded in the command log. Nothing else exists on the recording. Never invent a step, never reference a step by a number you did not read in the table, and never describe a capability the steps do not show.
 2. **At least one `demo_segment`.** A promo with no real footage is rejected in code. The demo segments are the point of the cut; the cards are packaging.
 3. **Stay inside the step's window.** For each `demo_segment`, `start_s` and `end_s` must both fall inside that step's `[start_s, end_s]` window as printed in the table (they are tape-clock estimates — take them from the table, never compute your own), and `start_s` must be less than `end_s`. A window belongs to exactly one step — borrowing time from a neighbouring step misattributes the footage.
-4. **Durations are honest.** Every scene needs `duration_s > 0`. For a `demo_segment`, `duration_s` must equal `end_s - start_s` (you are playing that span, not stretching it). `total_duration_s` must equal the sum of every scene's `duration_s`.
+4. **Durations are honest.** Every scene needs `duration_s > 0`. For a `demo_segment`, `duration_s` must equal `end_s - start_s` (you are playing that span, not stretching it). Do not worry about `total_duration_s` — the tool recomputes it from your scenes.
 5. **Cards carry text, not offsets. Segments carry offsets, not text.** `title_card` and `end_card` MUST set `text` (short — it has to be readable on screen, 120 characters max) and MUST leave `step_index`, `start_s`, and `end_s` null. A `demo_segment` sets the offsets and MUST leave `text` null — it is unretouched footage, and a caption parked on it is rejected in code.
 6. **A card may not print a command the run did not execute.** This is checked in code, not trusted: every command-shaped span of your card text must be either the verified success command exactly as printed in the facts below, or a command from the published guide. Anything else — an invented `pip install <package>`, an install line for a name you assumed, a `curl … | sh` — is rejected, because the compositor burns your card text into the video. Chaining does not help: every `&&` / `;` segment is checked on its own, so welding an invented command onto a verified one rejects the whole card. If you are not repeating a command from the facts, write plain prose with no command in it.
 7. **Card text comes from run facts.** The title card names the repo (and may say it is verified). The end card gives the reader the next command — the success command shown in the facts below, verbatim — or, if none fits, a plain-prose sign-off. Do not claim benchmarks, adoption, comparisons, or features that the steps do not demonstrate. No superlatives you cannot back with the footage.
-8. **Aim for the target duration.** Get `total_duration_s` close to the requested target. Prefer showing the payoff step (the last, most interesting one) over setup noise; drop steps rather than cutting them so short they cannot be read.
+8. **Aim for the target duration — but do not skimp on footage.** Demo segments are SPED UP to fit the target, so selecting more seconds of real footage than the target is normal and good: picking 60 seconds of footage for a 30-second cut simply plays it at 2x. What is NOT compressible is CARD time, which plays at face value and is subtracted from the budget before the footage is fitted — so keep cards to a few seconds each. Coming in under the target is fine. The only way to overshoot is to spend the budget on cards, or to select so much footage that even the maximum speed-up cannot fit it. Prefer showing the payoff step (the last, most interesting one) over setup noise; drop steps rather than cutting them so short they cannot be read.
 9. **Order the cut.** Title card first, demo segments in the order the steps ran, end card last.
 
 ## Worked example
@@ -66,4 +66,4 @@ a correct response is:
 }
 ```
 
-Note what the example does: both segments name an `index` from the table, both windows sit inside the printed windows, each `duration_s` equals `end_s - start_s`, the four durations sum to `total_duration_s`, the cards carry text and no offsets, the segments carry no text, and the end card repeats the success command from the facts verbatim rather than inventing an install line. Do the same.
+Note what the example does: both segments name an `index` from the table, both windows sit inside the printed windows, each `duration_s` equals `end_s - start_s`, the cards carry text and no offsets, the segments carry no text, and the end card repeats the success command from the facts verbatim rather than inventing an install line. Do the same.
