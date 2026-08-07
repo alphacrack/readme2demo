@@ -399,8 +399,12 @@ def build_promo(run_dir: Path, manifest: Manifest, cfg: Config) -> None:
             repo_url=manifest.repo_url,
             # Plan the cut for the same budget the compositor will enforce, so
             # the duration gate in validate_promo is judging the length the
-            # model was actually asked for.
-            target_duration_s=float(preset),
+            # model was actually asked for. The planner is handed the identical
+            # (style, preset) pair passed to render_promo below: its budget
+            # violation IS that gate, evaluated before the paid retry rather
+            # than after the ffmpeg pass, so the two must not drift.
+            style=style,
+            preset=preset,
         )
     except Exception as e:  # noqa: BLE001 — re-raised; this only rescues the cost
         cost = _exception_cost(e)
