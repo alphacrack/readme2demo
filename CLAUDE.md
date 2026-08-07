@@ -205,6 +205,30 @@ Each was found on a real run; each has code defenses and a regression test.
     ffmpeg — `tests/test_brand.py::TestDrawtextEscapingContract` keeps the
     property (unescaping in ffmpeg's order returns the author's text).
 
+19. **Native completion signal unread (mirror image of 16)** — OpenHands
+    agents may deliver R2D_SUCCESS through the `finish` ACTION rather than
+    printing it to a shell; the parser scanned agent MESSAGE actions only
+    (neither engine scans command output for markers), so a glow run that
+    built the binary and rendered the README was recorded `outcome: "failed"`
+    and died at normalize with the agent time already spent
+    (`--openai`/`--gemini`/`--anthropic` looked broken). Defense: `finish`
+    joins `message` in `_MARKER_ACTIONS`, and
+    `openhands._finish_text` reads every shape it arrives in — event
+    `message`, args (`final_thought`), and the `finish` tool call's
+    `arguments` as JSON string OR dict, top-level or nested in
+    `tool_call_metadata.model_response`. Class 16's `source == "user"` skip
+    now gates BOTH actions (over-reading and under-reading are fixed
+    together, never traded off), `_is_placeholder` still governs everything
+    harvested, and `task_completed: true` is corroboration only — never
+    success on its own, because an agent can finish having failed. Tool-call
+    identification is default-DENY (`name == "finish"`, or an unnamed call on
+    an event anchored by `tool_call_metadata.function_name`): another call's
+    arguments are a command the agent INTENDS to run, not an outcome. Golden
+    fixture: `tests/fixtures/openhands_glow_trajectory.json`. Residual, still
+    true: an OpenHands agent that only `echo`s R2D_SUCCESS into a shell is
+    reported failed — markers are read from agent text, never from captured
+    command output.
+
 ## The maintenance meta-workflow (how every fix above happened)
 
 1. Read the run dir: `manifest.json` → failing stage; `verify.log` tail;
