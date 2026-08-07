@@ -725,3 +725,568 @@ def test_prompt_echo_success_marker_alone_is_not_success(tmp_path):
     path.write_text(json.dumps(events), encoding="utf-8")
     log = OpenHandsEngine().parse_transcript(path)
     assert log.result.outcome == "failed"
+
+
+# -- reconcile_success_command -------------------------------------------------
+
+
+def _success_cmd_fixture(plan_cmd, entries):
+    from readme2demo.types import (
+        AgentResult, CommandEntry, CommandLog, Plan, SuccessCriteria,
+    )
+
+    plan = Plan(
+        quickstart_summary="q",
+        success_criteria=SuccessCriteria(command=plan_cmd, expected_pattern="verified"),
+    )
+    log = CommandLog(
+        engine="claude-code",
+        entries=[CommandEntry(**e) for e in entries],
+        result=AgentResult(outcome="success"),
+    )
+    return plan, log
+
+
+def _reconcile(plan_cmd, entries):
+    from readme2demo.normalize import reconcile_success_command
+
+    plan, log = _success_cmd_fixture(plan_cmd, entries)
+    changed, reason = reconcile_success_command(plan, log)
+    return changed, plan.success_criteria.command, reason
+
+
+def test_regression_success_command_uses_the_proven_absolute_path():
+    """Regression (run readme2demo-20260806-180604-f1d363): the planner wrote a
+    bare console-script name, but pip had installed it into ~/.local/bin, which
+    is not on PATH. The agent proved the absolute-path form (exit 0, twice);
+    commands.sh asserted the bare form and died with `command not found`
+    (exit 127), reporting a run whose criterion genuinely passed as UNVERIFIED.
+    """
+    changed, cmd, reason = _reconcile(
+        "readme2demo report examples/toolhive",
+        [
+            {"cmd": "readme2demo --help", "exit_code": 1},
+            {"cmd": "/home/demo/.local/bin/readme2demo --help", "exit_code": 0},
+            {
+                "cmd": "/home/demo/.local/bin/readme2demo report examples/toolhive",
+                "exit_code": 0,
+                "output": "verified: yes",
+            },
+        ],
+    )
+    assert changed
+    assert cmd == "/home/demo/.local/bin/readme2demo report examples/toolhive"
+    assert "proven equivalent" in reason
+
+
+def test_success_command_left_alone_when_its_own_spelling_worked():
+    """The planner's spelling ran and exited 0 — nothing to reconcile, and
+    rewriting it to another equivalent would be gratuitous churn."""
+    changed, cmd, _ = _reconcile(
+        "pytest tests/ -q",
+        [
+            {"cmd": "/usr/local/bin/pytest tests/ -q", "exit_code": 0},
+            {"cmd": "pytest tests/ -q", "exit_code": 0, "output": "ok"},
+        ],
+    )
+    assert not changed
+    assert cmd == "pytest tests/ -q"
+
+
+def test_success_command_never_swaps_to_a_failed_or_different_command():
+    """The swap may only land on a literal the log proves succeeded AND that
+    normalize_cmd calls the same command — never a failed run of it, and never
+    some other command that merely looks similar."""
+    changed, cmd, _ = _reconcile(
+        "acme build --release",
+        [
+            {"cmd": "/opt/acme/bin/acme build --release", "exit_code": 2},
+            {"cmd": "/opt/acme/bin/acme build --debug", "exit_code": 0},
+        ],
+    )
+    assert not changed
+    assert cmd == "acme build --release"
+
+
+def test_regression_exit_code_none_is_not_proof(monkeypatch):
+    """Regression (#278-style audit of this very function): exit_code None means
+    the result was NEVER OBSERVED — an unpaired tool_use, a killed or truncated
+    run — not success. Accepting it made the reconciler strictly more permissive
+    than the grounding rule it claims to reuse, so a command that never
+    demonstrably ran could be written into the verify assertion."""
+    changed, cmd, _ = _reconcile(
+        "acme verify",
+        [
+            {"cmd": "acme verify", "exit_code": 127},
+            {"cmd": "/opt/acme/bin/acme verify", "exit_code": None},
+        ],
+    )
+    assert not changed
+    assert cmd == "acme verify"
+
+
+def test_regression_chosen_literal_may_not_smuggle_shell_control_characters():
+    """Regression (audit): the assertion interpolates the command into
+    `$( ... 2>&1)`. A literal with a trailing `;` makes the null command the
+    last one in the substitution, so `$?` is 0 whatever the real command did —
+    `$(false ; 2>&1)` exits 0. That converts this false-NEGATIVE fix into a
+    false POSITIVE on the definition of "verified"."""
+    changed, cmd, _ = _reconcile(
+        "acme verify",
+        [{"cmd": "/opt/acme/bin/acme verify ;", "exit_code": 0, "output": "ok"}],
+    )
+    assert not changed
+    assert cmd == "acme verify"
+
+
+def test_regression_chain_segments_are_never_selected():
+    """Regression (audit): a candidate must be one whole simple command. A
+    chained entry whose LAST segment resembles the success command must not be
+    harvested — that is segment-selection, the hazard failure class 5 warns
+    about, and here the result would be executed."""
+    for chained in (
+        "cd /tmp && /opt/acme/bin/acme verify",
+        "/opt/acme/bin/acme verify | head",
+        "/opt/acme/bin/acme verify; echo done",
+    ):
+        changed, cmd, _ = _reconcile(
+            "acme verify", [{"cmd": chained, "exit_code": 0, "output": "ok"}]
+        )
+        assert not changed, chained
+        assert cmd == "acme verify"
+
+
+def test_regression_substitution_is_directional_never_less_specific():
+    """Regression (audit): normalize_cmd is a SYMMETRIC equivalence, correct for
+    grounding because both sides get the same lossy transform. This string is
+    EXECUTED, so the same equivalence is unsound in the losing direction — it is
+    lossy in exactly the tokens that decide which program runs and what it does.
+    """
+    # a pinned venv interpreter must not be replaced by whatever is on PATH
+    changed, cmd, _ = _reconcile(
+        "/work/.venv/bin/pytest tests/",
+        [{"cmd": "pytest tests/", "exit_code": 0, "output": "ok"}],
+    )
+    assert not changed and cmd == "/work/.venv/bin/pytest tests/"
+
+    # a flag the plan carried may not be dropped from an executed assertion
+    changed, cmd, _ = _reconcile(
+        "pip install --break-system-packages -e .",
+        [{"cmd": "pip install -e .", "exit_code": 0, "output": "ok"}],
+    )
+    assert not changed and cmd == "pip install --break-system-packages -e ."
+
+    # python3 -> python loses the interpreter the plan pinned
+    changed, cmd, _ = _reconcile(
+        "python3 -m mytool verify",
+        [{"cmd": "python -m mytool verify", "exit_code": 0, "output": "ok"}],
+    )
+    assert not changed and cmd == "python3 -m mytool verify"
+
+    # ...but gaining specificity is exactly the point and must still work
+    changed, cmd, _ = _reconcile(
+        "python -m mytool verify",
+        [{"cmd": "python3 -m mytool verify", "exit_code": 0, "output": "ok"}],
+    )
+    assert changed and cmd == "python3 -m mytool verify"
+
+    # ...as is a sandbox-required flag the agent had to ADD
+    changed, cmd, _ = _reconcile(
+        "pip install -e .",
+        [{"cmd": "pip install -e . --break-system-packages", "exit_code": 0}],
+    )
+    assert changed and cmd == "pip install -e . --break-system-packages"
+
+
+def test_success_command_swap_drops_a_stderr_merge():
+    """The assertion wraps the command and appends its own 2>&1, so a chosen
+    literal must not carry one or the emitted line doubles it."""
+    changed, cmd, _ = _reconcile(
+        "acme verify",
+        [{"cmd": "/opt/acme/bin/acme verify 2>&1", "exit_code": 0, "output": "ok"}],
+    )
+    assert changed
+    assert cmd == "/opt/acme/bin/acme verify"
+
+
+def test_regression_last_proven_form_wins():
+    """Regression (audit): the docstring promises the LAST proven form — what the
+    agent settled on after its retries. Unpinned, `proven[0]` passed the suite."""
+    changed, cmd, _ = _reconcile(
+        "acme verify",
+        [
+            {"cmd": "/opt/a/acme verify", "exit_code": 0},
+            {"cmd": "/opt/b/acme verify", "exit_code": 0},
+        ],
+    )
+    assert changed
+    assert cmd == "/opt/b/acme verify"
+
+
+def test_multiline_heredoc_success_command_is_left_alone():
+    """Heredocs are one multi-line command matched by PREFIX everywhere else
+    (failure class 7); collapsing one into a single line destroys it.
+
+    The proven form here is deliberately DIFFERENT from the plan's (an absolute
+    ``/bin/cat``) so the multi-line guard is what rejects it — not the
+    already-ran early return, which would hide the guard's absence.
+    """
+    heredoc = "cat > app.py <<'EOF'\nprint('hi')\nEOF"
+    proven = "/bin/cat > app.py <<'EOF'\nprint('hi')\nEOF"
+    changed, cmd, _ = _reconcile(heredoc, [{"cmd": proven, "exit_code": 0}])
+    assert not changed
+    assert cmd == heredoc
+    assert "\n" in cmd  # not flattened
+
+
+def test_regression_a_longer_command_is_not_an_equivalent_one():
+    """Regression (audit mutation M4): the equivalence must be EXACT, not
+    "contains". ``acme verify --deep`` is a different command from
+    ``acme verify`` — it only adds flags, so the specificity rule alone would
+    wave it through, and substituting it would silently change what the
+    assertion asserts."""
+    changed, cmd, _ = _reconcile(
+        "acme verify",
+        [{"cmd": "acme verify --deep", "exit_code": 0, "output": "ok"}],
+    )
+    assert not changed
+    assert cmd == "acme verify"
+
+
+def test_regression_findings_tool_success_command_is_reconcilable():
+    """A findings tool exits nonzero ON SUCCESS (failure class 4) and is proof
+    only once mark_findings_success has marked it — which is why the orchestrator
+    runs this reconciler AFTER that pass, not before."""
+    from readme2demo.normalize import reconcile_success_command
+
+    plan, log = _success_cmd_fixture(
+        "drift-detect ./src",
+        [{"cmd": "/opt/tools/drift-detect ./src", "exit_code": 3, "output": "2 found"}],
+    )
+    log.entries[0].findings_success = True
+    changed, _ = reconcile_success_command(plan, log)
+    assert changed
+    assert plan.success_criteria.command == "/opt/tools/drift-detect ./src"
+
+
+def test_known_gap_findings_marking_does_not_yet_see_drifted_spellings():
+    """Documents a REAL gap found while auditing this change, so nobody assumes
+    classes 4 and 17 already compose.
+
+    ``mark_findings_success`` matches the plan command with a literal
+    whitespace-only ``_norm``, not with ``normalize_cmd``. So a findings tool
+    invoked by absolute path is never marked, and the reconciler's
+    ``findings_success`` branch stays unreachable in production no matter how
+    the two passes are ordered. Teaching ``mark_findings_success`` the same
+    symmetric equivalence changes which entries enter the grounding candidate
+    set, so it is deliberately NOT bundled into this fix.
+
+    When that is fixed, this test flips to the composing assertion below it.
+    """
+    from readme2demo.normalize import mark_findings_success
+
+    plan, log = _success_cmd_fixture(
+        "drift-detect ./src",
+        [{"cmd": "/opt/tools/drift-detect ./src", "exit_code": 3, "output": "2 found"}],
+    )
+    plan.success_criteria.expected_pattern = "found"
+    assert mark_findings_success(plan, log) == 0  # <- the gap; not the ideal
+    assert not any(e.findings_success for e in log.entries)
+
+
+def test_reconciler_is_ordered_after_findings_marking():
+    """The orchestrator must call the reconciler AFTER mark_findings_success.
+
+    ``normalize()`` re-parses the transcript, so every ``findings_success`` is
+    False until that pass runs; reconciling first would make the branch dead by
+    construction. Pins the call-site ORDER in source, since the two functions
+    are pure and a unit test cannot observe the sequence.
+    """
+    import inspect
+
+    from readme2demo import orchestrator
+
+    src = inspect.getsource(orchestrator.Orchestrator._stage_normalize)
+    assert src.index("mark_findings_success") < src.index("reconcile_success_command")
+
+
+# --- OpenHandsEngine.parse_transcript: the native `finish` action (#259) ------
+
+
+def _openhands_log(tmp_path, events: list[dict]):
+    from readme2demo.engines.openhands import OpenHandsEngine
+
+    path = tmp_path / "trajectory.json"
+    path.write_text(json.dumps(events), encoding="utf-8")
+    return OpenHandsEngine().parse_transcript(path)
+
+
+def test_regression_259_finish_action_success_from_real_trajectory(fixtures_dir: Path):
+    """Regression (#259, run glow-20260804-203454-2e5c91): the agent built glow
+    and rendered the README, then signalled success through OpenHands' NATIVE
+    `finish` action instead of printing R2D_SUCCESS to a shell. The parser
+    scanned agent MESSAGE actions only, so the marker never reached the scanner
+    and a working run was recorded as outcome="failed", killing the pipeline at
+    normalize. This golden fixture is that trajectory (event 18 — the finish
+    action — verbatim); it parses as "failed" without the fix.
+    """
+    from readme2demo.engines.openhands import OpenHandsEngine
+
+    log = OpenHandsEngine().parse_transcript(
+        fixtures_dir / "openhands_glow_trajectory.json"
+    )
+    assert log.result.outcome == "success"
+    assert log.result.blocked_reason is None
+    # The same fixture carries the class-16 poison: a source="user" echo of the
+    # task prompt documenting `BLOCKED: <reason>` / `ADJUSTED_SUCCESS: <new
+    # command>`. Reading the finish action must not have re-opened that door.
+    assert log.adjusted_success_command is None
+    assert log.adjusted_success_pattern is None
+    assert log.fixes == []
+    # The real work is still parsed out of the run actions.
+    assert len(log.entries) == 7
+    assert log.entries[-1].cmd.strip() == "cd /work && ./glow README.md"
+    assert "Render markdown on the CLI" in log.entries[-1].output
+
+
+def test_regression_259_finish_action_marker_shapes(tmp_path):
+    """Regression (#259): the finish text lands in a different field in almost
+    every OpenHands/provider combination — on the event (`message`), in the
+    action args (`final_thought`), or inside the `finish` tool call's
+    `arguments`, which arrive either as a JSON string or an already-parsed
+    dict, at the top of the event or nested under `tool_call_metadata`. Every
+    shape must ground; none may explode.
+    """
+    shapes: list[dict] = [
+        # 1. event-level message only
+        {"action": "finish", "source": "agent", "message": "R2D_SUCCESS"},
+        # 2. args.final_thought (what OpenHands 0.48 writes)
+        {
+            "action": "finish", "source": "agent",
+            "message": "All done! What's next on the agenda?",
+            "args": {"final_thought": "R2D_SUCCESS", "task_completed": "true",
+                     "outputs": {}, "thought": ""},
+        },
+        # 3. top-level tool call, arguments as a JSON *string*
+        {
+            "action": "finish", "source": "agent",
+            "tool_calls": [{"function": {
+                "name": "finish",
+                "arguments": '{"message": "R2D_SUCCESS", "task_completed": "true"}',
+            }}],
+        },
+        # 4. same, arguments already parsed into a dict
+        {
+            "action": "finish", "source": "agent",
+            "tool_calls": [{"function": {
+                "name": "finish",
+                "arguments": {"message": "R2D_SUCCESS", "task_completed": True},
+            }}],
+        },
+        # 5. flat tool call (no "function" wrapper), unparseable arguments
+        {
+            "action": "finish", "source": "agent",
+            "tool_calls": [{"name": "finish", "arguments": '{"message": "R2D_SUCCESS'}],
+        },
+        # 6. buried in tool_call_metadata.model_response — the real 0.48 shape
+        {
+            "action": "finish", "source": "agent",
+            "tool_call_metadata": {"model_response": {"choices": [{"message": {
+                "tool_calls": [{"function": {
+                    "name": "finish",
+                    "arguments": '{"message": "R2D_SUCCESS", "task_completed": "true"}',
+                }}],
+            }}]}},
+        },
+    ]
+    for i, event in enumerate(shapes):
+        log = _openhands_log(tmp_path, [event])
+        assert log.result.outcome == "success", f"shape {i + 1} did not ground"
+
+    # Shapes that carry no marker must stay failed rather than raise.
+    for junk in (
+        {"action": "finish", "source": "agent"},
+        {"action": "finish", "source": "agent", "args": None, "message": None},
+        {"action": "finish", "source": "agent", "args": {"final_thought": 17}},
+        {"action": "finish", "source": "agent", "tool_calls": "not-a-list"},
+        {"action": "finish", "source": "agent",
+         "tool_calls": [{"function": {"name": "finish", "arguments": None}}]},
+    ):
+        assert _openhands_log(tmp_path, [junk]).result.outcome == "failed"
+
+
+def test_regression_259_finish_does_not_reopen_prompt_echo(tmp_path):
+    """Regression (#259, mirror image of class 16): reading the finish action
+    must not weaken the source filter. A user-sourced `finish` — the shape a
+    prompt echo or a replayed instruction would take — is still skipped, so
+    neither its R2D_SUCCESS nor its marker templates count.
+    """
+    log = _openhands_log(tmp_path, [
+        {
+            "action": "finish", "source": "user",
+            "message": "On success print exactly:\nR2D_SUCCESS",
+            "args": {"final_thought": "BLOCKED: <reason>", "task_completed": "true"},
+        },
+        {"action": "run", "source": "agent", "args": {"command": "ls"}},
+    ])
+    assert log.result.outcome == "failed"
+    assert log.result.blocked_reason is None
+    assert log.fixes == []
+
+
+def test_regression_259_finish_placeholders_are_rejected(tmp_path):
+    """Regression (#259): `_is_placeholder` still governs everything harvested
+    from a finish action. An agent that restates its instructions in the final
+    message ships un-filled `<...>` templates; they must not become a blocked
+    reason, a FIX, or an adjusted success command.
+    """
+    log = _openhands_log(tmp_path, [
+        {
+            "action": "finish", "source": "agent",
+            "message": "Here is how I would report problems:",
+            "args": {
+                "final_thought": (
+                    "FIX: <what you are changing> BECAUSE: <why it fails>\n"
+                    "BLOCKED: <reason>\n"
+                    "ADJUSTED_SUCCESS: <new command> EXPECT: <regex the output matches>"
+                ),
+                "task_completed": "false",
+            },
+        },
+    ])
+    assert log.result.outcome == "failed"
+    assert log.result.blocked_reason is None
+    assert log.adjusted_success_command is None
+    assert log.fixes == []
+
+    # Real values delivered through finish still parse.
+    log = _openhands_log(tmp_path, [
+        {
+            "action": "finish", "source": "agent",
+            "args": {"final_thought": "BLOCKED: the demo needs a GPU",
+                     "task_completed": "false"},
+        },
+    ])
+    assert log.result.outcome == "blocked"
+    assert log.result.blocked_reason == "the demo needs a GPU"
+
+
+def test_regression_259_task_completed_alone_is_not_success(tmp_path):
+    """Regression (#259): `task_completed: true` is the agent's own unverified
+    self-report — corroborating evidence, never proof. An agent can call finish
+    having failed, so a finish action with no R2D_SUCCESS anywhere must stay
+    "failed" no matter how confidently it claims completion.
+    """
+    for completed in ("true", True):
+        log = _openhands_log(tmp_path, [
+            {"action": "run", "source": "agent", "args": {"command": "go build ./..."}},
+            {"observation": "run", "source": "agent", "content": "build failed",
+             "extras": {"exit_code": 1}},
+            {
+                "action": "finish", "source": "agent",
+                "message": "All done! What's next on the agenda?",
+                "args": {"final_thought": "I could not get the build working.",
+                         "task_completed": completed},
+                "tool_calls": [{"function": {
+                    "name": "finish",
+                    "arguments": json.dumps(
+                        {"message": "Wrapping up.", "task_completed": completed}
+                    ),
+                }}],
+            },
+        ])
+        assert log.result.outcome == "failed"
+
+
+def test_regression_259_finish_ignores_non_finish_tool_arguments(tmp_path):
+    """Regression (#259): only the `finish` tool call's arguments are read. A
+    command the agent merely *intended* to run (`echo R2D_SUCCESS`) is a plan,
+    not an outcome — grounding never comes from a tool call's input.
+
+    Tool identification is default-DENY, so an UNNAMED call (the shape a
+    streamed tool call takes when the name arrived in an earlier delta) is
+    read only when the event itself is anchored to the finish tool via
+    `tool_call_metadata.function_name`.
+    """
+    named_other = _openhands_log(tmp_path, [
+        {
+            "action": "finish", "source": "agent",
+            "message": "Wrapping up without success.",
+            "tool_calls": [{"function": {
+                "name": "execute_bash",
+                "arguments": '{"command": "echo R2D_SUCCESS"}',
+            }}],
+        },
+    ])
+    assert named_other.result.outcome == "failed"
+
+    # Unnamed, unanchored: an anonymous payload never grounds on its own.
+    for anonymous in (
+        {"arguments": '{"command": "echo R2D_SUCCESS"}'},
+        {"name": None, "arguments": '{"command": "echo R2D_SUCCESS"}'},
+    ):
+        log = _openhands_log(tmp_path, [
+            {
+                "action": "finish", "source": "agent",
+                "message": "Wrapping up, the build never worked.",
+                "tool_call_metadata": {"model_response": {"choices": [
+                    {"message": {"tool_calls": [anonymous]}}
+                ]}},
+            },
+        ])
+        assert log.result.outcome == "failed"
+
+    # Same payload, but the event names the finish tool: now it is the
+    # agent's completion signal and the marker counts.
+    anchored = _openhands_log(tmp_path, [
+        {
+            "action": "finish", "source": "agent",
+            "message": "All done!",
+            "tool_call_metadata": {
+                "function_name": "finish",
+                "model_response": {"choices": [{"message": {"tool_calls": [
+                    {"arguments": '{"message": "R2D_SUCCESS"}'}
+                ]}}]},
+            },
+        },
+    ])
+    assert anchored.result.outcome == "success"
+
+
+def test_regression_259_adjusted_success_through_finish(tmp_path):
+    """Regression (#259): ADJUSTED_SUCCESS is the one extraction with teeth —
+    it rewrites plan.json's success command, which becomes the commands.sh
+    assertion and the guide's payoff step. Delivered through a finish action it
+    must parse exactly as it does from a message, and only when it is real.
+    """
+    log = _openhands_log(tmp_path, [
+        {"action": "run", "source": "agent", "args": {"command": "go build -o glow ."}},
+        {"observation": "run", "source": "agent", "content": "ok",
+         "extras": {"exit_code": 0}},
+        {
+            "action": "finish", "source": "agent",
+            "args": {
+                "final_thought": (
+                    "ADJUSTED_SUCCESS: ./glow --help EXPECT: Render markdown\n"
+                    "R2D_SUCCESS"
+                ),
+                "task_completed": "true",
+            },
+        },
+    ])
+    assert log.result.outcome == "success"
+    assert log.adjusted_success_command == "./glow --help"
+    assert log.adjusted_success_pattern == "Render markdown"
+
+
+def test_regression_259_finish_without_source_is_still_scanned(tmp_path):
+    """Regression (#259): the class-16 gate is a deny-list (`source == "user"`),
+    deliberately — a trajectory that drops or renames `source` must not silently
+    stop grounding, which is the very failure this issue fixed. Only OpenHands
+    itself emits `finish`, and it emits it for the agent, so a source-less
+    finish is scanned. Pinned so the choice stays deliberate.
+    """
+    log = _openhands_log(tmp_path, [
+        {"action": "finish", "args": {"final_thought": "R2D_SUCCESS"}},
+    ])
+    assert log.result.outcome == "success"

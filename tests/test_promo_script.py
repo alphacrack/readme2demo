@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from readme2demo import distill, promo_script
+from readme2demo import distill, promo, promo_script
 from readme2demo.promo_script import (
     PromoScriptError,
     collect_violations,
@@ -112,6 +112,224 @@ def make_script(timestamps: dict, index: int = 1) -> PromoScript:
             ),
         ],
     )
+
+
+# -- duration bookkeeping vs budget (#169, real run glow-20260805-181029) ------
+
+
+def test_regression_mismatched_total_duration_is_normalized_not_rejected() -> None:
+    """Regression (#169, run glow-20260805-181029): a real verified run lost its
+    promo cut to `total_duration_s (30.0) is not the sum (34.0)`.
+
+    total_duration_s is derivable from the scenes, so the code computes it
+    instead of asking the model for arithmetic and throwing away an otherwise
+    grounded plan. An off-by-anything total must normalize silently.
+    """
+    from readme2demo.promo_script import _normalize_total
+
+    ts = make_timestamps()
+    script = make_script(ts)
+    script.total_duration_s = 30.0  # the model's (wrong) arithmetic
+    real_sum = sum(sc.duration_s for sc in script.scenes)
+    assert real_sum != 30.0
+
+    normalized = _normalize_total(script)
+    assert normalized.total_duration_s == pytest.approx(real_sum)
+    assert collect_violations(normalized, GUIDE, make_log(), ts, make_plan()) == []
+
+
+def test_regression_cards_padding_past_the_budget_are_a_violation() -> None:
+    """Regression (#169): the model's REAL mistake in that run was a plan that
+    would not fit the budget, but the validator complained about bookkeeping —
+    so the retry was told to fix the wrong thing and failed identically.
+
+    Card seconds are the fixed cost of a cut: nothing speeds them up, so cards
+    padding past the preset's tolerance are the case that genuinely cannot fit.
+    """
+    ts = make_timestamps()
+    script = _card_padded_script(ts, seconds=300.0)
+    violations = collect_violations(script, GUIDE, make_log(), ts, make_plan())
+    assert any("would run" in v and "budget" in v for v in violations), violations
+    assert not any("is not the sum" in v for v in violations)
+
+
+def test_regression_footage_rich_plan_is_not_an_overrun() -> None:
+    """Regression (#278 review): the first fix for the run above measured the
+    budget in NOMINAL scene seconds, but the compositor's budget is in PLAYED
+    seconds — demo segments are sped up to fit (``promo.segment_pace``).
+
+    So a plan selecting 60s of verified footage for a 30s cut renders at ~28.8s,
+    dead on target, and was still rejected — re-creating the very failure the
+    fix existed to remove, one unit over. Selecting MORE verified footage than
+    the target is correct behaviour and must never be a violation.
+    """
+    ts = make_timestamps()
+    script = _footage_rich_script(ts, repeats=6)
+
+    nominal = sum(sc.duration_s for sc in script.scenes)
+    played = promo.expected_promo_duration_s(script, preset=promo.DEFAULT_DURATION)
+    assert nominal > 2 * played, (nominal, played)  # the units really do differ
+    assert played <= promo.duration_preset(promo.DEFAULT_DURATION).target_s
+
+    assert collect_violations(script, GUIDE, make_log(), ts, make_plan()) == []
+
+
+def test_footage_that_cannot_fit_even_at_max_pace_is_still_a_violation() -> None:
+    """Regression (#278 review): measuring in played seconds must not become a
+    licence to select unbounded footage. Past ``max_pace`` the speed-up has
+    nothing left to give, so the cut really does overrun and the plan is
+    refused — the same verdict ``promo.validate_promo`` reaches after the
+    render, only reached here for free."""
+    ts = make_timestamps()
+    script = _footage_rich_script(ts, repeats=40)
+    dp = promo.duration_preset(promo.DEFAULT_DURATION)
+
+    # State the premise rather than trusting the repeat count: if a change to
+    # the fixtures ever made this plan fittable, the test must say so out loud
+    # instead of quietly passing while asserting nothing.
+    assert promo.segment_pace(script, preset=promo.DEFAULT_DURATION) == dp.max_pace
+    played = promo.expected_promo_duration_s(script, preset=promo.DEFAULT_DURATION)
+    assert played > dp.target_s + dp.tolerance_s, played
+
+    violations = collect_violations(script, GUIDE, make_log(), ts, make_plan())
+    assert any("would run" in v for v in violations), violations
+
+
+def test_a_short_cut_is_not_a_violation() -> None:
+    """Regression (#169): an honest SHORT cut must pass — failing it would
+    pressure the model into padding the promo with footage the run never
+    produced, which is the opposite of the point."""
+    ts = make_timestamps()
+    script = make_script(ts)  # well under a 30s target
+    assert collect_violations(script, GUIDE, make_log(), ts, make_plan()) == []
+
+
+def test_regression_run_promo_script_normalizes_the_total_it_was_given(
+    monkeypatch,
+) -> None:
+    """Regression (#278 review): the pure helpers were pinned, but the WIRING
+    was not — ``_normalize_total`` could be unhooked from ``run_promo_script``
+    with the whole suite still green, which is exactly how glow-20260805-181029
+    got past the tests in the first place. This pins the pipeline behaviour.
+    """
+    ts = make_timestamps()
+    script = make_script(ts)
+    script.total_duration_s = 999.0  # the model's arithmetic, badly wrong
+    real_sum = sum(sc.duration_s for sc in script.scenes)
+    calls: list[str] = []
+
+    def fake_complete_json(system, user, model, schema, **kwargs):
+        calls.append(user)
+        return script, 0.01
+
+    monkeypatch.setattr(promo_script.llm, "complete_json", fake_complete_json)
+    out, cost = run_promo_script(make_plan(), make_log(), GUIDE, ts, model="m")
+
+    # One call: the bad total must not have provoked a retry...
+    assert len(calls) == 1
+    # ...and what ships carries the derived total, not the model's.
+    assert out.total_duration_s == pytest.approx(real_sum)
+    assert cost == pytest.approx(0.01)
+
+
+def test_regression_run_promo_script_enforces_the_budget_it_planned_for(
+    monkeypatch,
+) -> None:
+    """Regression (#278 review): the budget check must actually be WIRED into
+    both passes of the loop. Dropping the (style, preset) pair from the
+    ``collect_violations`` calls left every test green, so the planner could
+    silently stop policing the budget at all.
+
+    A card-padded plan returned twice must cost two calls and then raise.
+    """
+    ts = make_timestamps()
+    bad = _card_padded_script(ts, seconds=300.0)
+    calls: list[str] = []
+
+    def fake_complete_json(system, user, model, schema, **kwargs):
+        calls.append(user)
+        return bad, 0.01
+
+    monkeypatch.setattr(promo_script.llm, "complete_json", fake_complete_json)
+    with pytest.raises(PromoScriptError) as excinfo:
+        run_promo_script(make_plan(), make_log(), GUIDE, ts, model="m")
+
+    assert len(calls) == 2  # first pass + the one retry
+    assert "would run" in str(excinfo.value)
+    assert excinfo.value.cost_usd == pytest.approx(0.02)
+    # The retry was told what actually went wrong, not "fix your arithmetic".
+    assert "would run" in calls[1]
+
+
+def test_regression_run_promo_script_plans_for_the_preset_it_is_given(
+    monkeypatch,
+) -> None:
+    """Regression (#278 review): the planner's budget and the compositor's gate
+    must be the SAME budget. A 15s cut has to be planned against 15s — if the
+    preset never reaches the validator, the model is asked for one length and
+    policed against another."""
+    ts = make_timestamps()
+    script = _footage_rich_script(ts, repeats=18)
+    # The premise, stated rather than assumed: this exact plan fits a 30s cut
+    # and does NOT fit a 15s one. Without this the test could pass while both
+    # presets behaved identically.
+    assert promo.expected_promo_duration_s(script, preset=30) <= 30 + 12
+    assert promo.expected_promo_duration_s(script, preset=15) > 15 + 6
+    calls: list[str] = []
+
+    def fake_complete_json(system, user, model, schema, **kwargs):
+        calls.append(user)
+        return script, 0.01
+
+    monkeypatch.setattr(promo_script.llm, "complete_json", fake_complete_json)
+
+    # Same script, the budget it was built for: accepted in one call.
+    out, _ = run_promo_script(make_plan(), make_log(), GUIDE, ts, model="m", preset=30)
+    assert out is script
+    assert len(calls) == 1
+    assert "30.0 seconds" in calls[0]
+
+    # ...and against the tighter preset it cannot fit: rejected, and the prompt
+    # asked for 15s rather than the default.
+    calls.clear()
+    with pytest.raises(PromoScriptError):
+        run_promo_script(make_plan(), make_log(), GUIDE, ts, model="m", preset=15)
+    assert "15.0 seconds" in calls[0]
+
+
+def _card_padded_script(timestamps: dict, seconds: float) -> PromoScript:
+    """A grounded script whose CARDS pad it past the budget (segments stay
+    honest — a segment may never claim more than the window it plays)."""
+    script = make_script(timestamps)
+    script.scenes[0].duration_s = seconds / 2
+    script.scenes[-1].duration_s = seconds / 2
+    return promo_script._normalize_total(script)
+
+
+def _footage_rich_script(timestamps: dict, repeats: int) -> PromoScript:
+    """A fully grounded script that selects MORE footage than the cut targets.
+
+    Every segment cites a published+grounded step, stays inside that step's own
+    window, and has ``duration_s == end_s - start_s`` — nothing here is
+    dishonest. The plan simply leans on the speed ramp, which is what the ramp
+    is for. ``repeats`` scales the footage without inventing new steps.
+    """
+    script = make_script(timestamps)
+    segments = []
+    for _ in range(repeats):
+        for index in range(len(timestamps["steps"])):
+            lo, hi = window(timestamps, index)
+            segments.append(
+                PromoScene(
+                    kind="demo_segment",
+                    step_index=index,
+                    start_s=lo,
+                    end_s=hi,
+                    duration_s=hi - lo,
+                )
+            )
+    script.scenes = [script.scenes[0], *segments, script.scenes[-1]]
+    return promo_script._normalize_total(script)
 
 
 # -- eligibility + happy path ---------------------------------------------------
@@ -611,8 +829,13 @@ def test_inverted_and_missing_offsets_are_violations() -> None:
 
 def test_duration_and_card_structure_violations() -> None:
     """Regression (#169): durations must be positive and honest (a segment plays
-    exactly its span, and total_duration_s is the sum), and cards carry text
-    rather than video offsets."""
+    exactly its span), and cards carry text rather than video offsets.
+
+    Note what is NOT asserted: a ``total_duration_s`` disagreeing with the sum.
+    That check was removed after run glow-20260805-181029 lost a promo cut to
+    it — the total is derivable, so the code normalizes it. The per-scene
+    honesty check below is the one that protects grounding, and it stays.
+    """
     ts = make_timestamps()
     script = make_script(ts)
     script.scenes[1].duration_s = 99.0  # no longer end_s - start_s
@@ -622,7 +845,7 @@ def test_duration_and_card_structure_violations() -> None:
     assert any("does not match" in v for v in violations)
     assert any("needs non-empty on-screen `text`" in v for v in violations)
     assert any("must leave step_index/start_s/end_s null" in v for v in violations)
-    assert any("is not the sum of the scene durations" in v for v in violations)
+    assert not any("is not the sum" in v for v in violations)
 
     zero = make_script(ts)
     zero.scenes[0].duration_s = 0.0
