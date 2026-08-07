@@ -390,7 +390,19 @@ Initial public release.
   `commands.sh`, `demo.tape`, `demo.mp4`, `demo.gif`, and `howto.jsonld`.
 - Verified `examples/toolhive/` reference run committed as proof.
 
-[Unreleased]: https://github.com/alphacrack/readme2demo/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/alphacrack/readme2demo/compare/v0.7.5...HEAD
+[0.7.5]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.5
+[0.7.4]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.4
+[0.7.3]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.3
+[0.7.2]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.2
+[0.7.1]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.1
+[0.7.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.0
+[0.6.4]: https://github.com/alphacrack/readme2demo/releases/tag/v0.6.4
+[0.6.3]: https://github.com/alphacrack/readme2demo/releases/tag/v0.6.3
+[0.6.2]: https://github.com/alphacrack/readme2demo/releases/tag/v0.6.2
+[0.6.1]: https://github.com/alphacrack/readme2demo/releases/tag/v0.6.1
+[0.6.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.6.0
+[0.5.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.5.0
 [0.4.1]: https://github.com/alphacrack/readme2demo/releases/tag/v0.4.1
 [0.4.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.4.0
 [0.3.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.3.0
