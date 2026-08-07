@@ -725,3 +725,286 @@ def test_prompt_echo_success_marker_alone_is_not_success(tmp_path):
     path.write_text(json.dumps(events), encoding="utf-8")
     log = OpenHandsEngine().parse_transcript(path)
     assert log.result.outcome == "failed"
+
+
+# -- reconcile_success_command -------------------------------------------------
+
+
+def _success_cmd_fixture(plan_cmd, entries):
+    from readme2demo.types import (
+        AgentResult, CommandEntry, CommandLog, Plan, SuccessCriteria,
+    )
+
+    plan = Plan(
+        quickstart_summary="q",
+        success_criteria=SuccessCriteria(command=plan_cmd, expected_pattern="verified"),
+    )
+    log = CommandLog(
+        engine="claude-code",
+        entries=[CommandEntry(**e) for e in entries],
+        result=AgentResult(outcome="success"),
+    )
+    return plan, log
+
+
+def _reconcile(plan_cmd, entries):
+    from readme2demo.normalize import reconcile_success_command
+
+    plan, log = _success_cmd_fixture(plan_cmd, entries)
+    changed, reason = reconcile_success_command(plan, log)
+    return changed, plan.success_criteria.command, reason
+
+
+def test_regression_success_command_uses_the_proven_absolute_path():
+    """Regression (run readme2demo-20260806-180604-f1d363): the planner wrote a
+    bare console-script name, but pip had installed it into ~/.local/bin, which
+    is not on PATH. The agent proved the absolute-path form (exit 0, twice);
+    commands.sh asserted the bare form and died with `command not found`
+    (exit 127), reporting a run whose criterion genuinely passed as UNVERIFIED.
+    """
+    changed, cmd, reason = _reconcile(
+        "readme2demo report examples/toolhive",
+        [
+            {"cmd": "readme2demo --help", "exit_code": 1},
+            {"cmd": "/home/demo/.local/bin/readme2demo --help", "exit_code": 0},
+            {
+                "cmd": "/home/demo/.local/bin/readme2demo report examples/toolhive",
+                "exit_code": 0,
+                "output": "verified: yes",
+            },
+        ],
+    )
+    assert changed
+    assert cmd == "/home/demo/.local/bin/readme2demo report examples/toolhive"
+    assert "proven equivalent" in reason
+
+
+def test_success_command_left_alone_when_its_own_spelling_worked():
+    """The planner's spelling ran and exited 0 — nothing to reconcile, and
+    rewriting it to another equivalent would be gratuitous churn."""
+    changed, cmd, _ = _reconcile(
+        "pytest tests/ -q",
+        [
+            {"cmd": "/usr/local/bin/pytest tests/ -q", "exit_code": 0},
+            {"cmd": "pytest tests/ -q", "exit_code": 0, "output": "ok"},
+        ],
+    )
+    assert not changed
+    assert cmd == "pytest tests/ -q"
+
+
+def test_success_command_never_swaps_to_a_failed_or_different_command():
+    """The swap may only land on a literal the log proves succeeded AND that
+    normalize_cmd calls the same command — never a failed run of it, and never
+    some other command that merely looks similar."""
+    changed, cmd, _ = _reconcile(
+        "acme build --release",
+        [
+            {"cmd": "/opt/acme/bin/acme build --release", "exit_code": 2},
+            {"cmd": "/opt/acme/bin/acme build --debug", "exit_code": 0},
+        ],
+    )
+    assert not changed
+    assert cmd == "acme build --release"
+
+
+def test_regression_exit_code_none_is_not_proof(monkeypatch):
+    """Regression (#278-style audit of this very function): exit_code None means
+    the result was NEVER OBSERVED — an unpaired tool_use, a killed or truncated
+    run — not success. Accepting it made the reconciler strictly more permissive
+    than the grounding rule it claims to reuse, so a command that never
+    demonstrably ran could be written into the verify assertion."""
+    changed, cmd, _ = _reconcile(
+        "acme verify",
+        [
+            {"cmd": "acme verify", "exit_code": 127},
+            {"cmd": "/opt/acme/bin/acme verify", "exit_code": None},
+        ],
+    )
+    assert not changed
+    assert cmd == "acme verify"
+
+
+def test_regression_chosen_literal_may_not_smuggle_shell_control_characters():
+    """Regression (audit): the assertion interpolates the command into
+    `$( ... 2>&1)`. A literal with a trailing `;` makes the null command the
+    last one in the substitution, so `$?` is 0 whatever the real command did —
+    `$(false ; 2>&1)` exits 0. That converts this false-NEGATIVE fix into a
+    false POSITIVE on the definition of "verified"."""
+    changed, cmd, _ = _reconcile(
+        "acme verify",
+        [{"cmd": "/opt/acme/bin/acme verify ;", "exit_code": 0, "output": "ok"}],
+    )
+    assert not changed
+    assert cmd == "acme verify"
+
+
+def test_regression_chain_segments_are_never_selected():
+    """Regression (audit): a candidate must be one whole simple command. A
+    chained entry whose LAST segment resembles the success command must not be
+    harvested — that is segment-selection, the hazard failure class 5 warns
+    about, and here the result would be executed."""
+    for chained in (
+        "cd /tmp && /opt/acme/bin/acme verify",
+        "/opt/acme/bin/acme verify | head",
+        "/opt/acme/bin/acme verify; echo done",
+    ):
+        changed, cmd, _ = _reconcile(
+            "acme verify", [{"cmd": chained, "exit_code": 0, "output": "ok"}]
+        )
+        assert not changed, chained
+        assert cmd == "acme verify"
+
+
+def test_regression_substitution_is_directional_never_less_specific():
+    """Regression (audit): normalize_cmd is a SYMMETRIC equivalence, correct for
+    grounding because both sides get the same lossy transform. This string is
+    EXECUTED, so the same equivalence is unsound in the losing direction — it is
+    lossy in exactly the tokens that decide which program runs and what it does.
+    """
+    # a pinned venv interpreter must not be replaced by whatever is on PATH
+    changed, cmd, _ = _reconcile(
+        "/work/.venv/bin/pytest tests/",
+        [{"cmd": "pytest tests/", "exit_code": 0, "output": "ok"}],
+    )
+    assert not changed and cmd == "/work/.venv/bin/pytest tests/"
+
+    # a flag the plan carried may not be dropped from an executed assertion
+    changed, cmd, _ = _reconcile(
+        "pip install --break-system-packages -e .",
+        [{"cmd": "pip install -e .", "exit_code": 0, "output": "ok"}],
+    )
+    assert not changed and cmd == "pip install --break-system-packages -e ."
+
+    # python3 -> python loses the interpreter the plan pinned
+    changed, cmd, _ = _reconcile(
+        "python3 -m mytool verify",
+        [{"cmd": "python -m mytool verify", "exit_code": 0, "output": "ok"}],
+    )
+    assert not changed and cmd == "python3 -m mytool verify"
+
+    # ...but gaining specificity is exactly the point and must still work
+    changed, cmd, _ = _reconcile(
+        "python -m mytool verify",
+        [{"cmd": "python3 -m mytool verify", "exit_code": 0, "output": "ok"}],
+    )
+    assert changed and cmd == "python3 -m mytool verify"
+
+    # ...as is a sandbox-required flag the agent had to ADD
+    changed, cmd, _ = _reconcile(
+        "pip install -e .",
+        [{"cmd": "pip install -e . --break-system-packages", "exit_code": 0}],
+    )
+    assert changed and cmd == "pip install -e . --break-system-packages"
+
+
+def test_success_command_swap_drops_a_stderr_merge():
+    """The assertion wraps the command and appends its own 2>&1, so a chosen
+    literal must not carry one or the emitted line doubles it."""
+    changed, cmd, _ = _reconcile(
+        "acme verify",
+        [{"cmd": "/opt/acme/bin/acme verify 2>&1", "exit_code": 0, "output": "ok"}],
+    )
+    assert changed
+    assert cmd == "/opt/acme/bin/acme verify"
+
+
+def test_regression_last_proven_form_wins():
+    """Regression (audit): the docstring promises the LAST proven form — what the
+    agent settled on after its retries. Unpinned, `proven[0]` passed the suite."""
+    changed, cmd, _ = _reconcile(
+        "acme verify",
+        [
+            {"cmd": "/opt/a/acme verify", "exit_code": 0},
+            {"cmd": "/opt/b/acme verify", "exit_code": 0},
+        ],
+    )
+    assert changed
+    assert cmd == "/opt/b/acme verify"
+
+
+def test_multiline_heredoc_success_command_is_left_alone():
+    """Heredocs are one multi-line command matched by PREFIX everywhere else
+    (failure class 7); collapsing one into a single line destroys it.
+
+    The proven form here is deliberately DIFFERENT from the plan's (an absolute
+    ``/bin/cat``) so the multi-line guard is what rejects it — not the
+    already-ran early return, which would hide the guard's absence.
+    """
+    heredoc = "cat > app.py <<'EOF'\nprint('hi')\nEOF"
+    proven = "/bin/cat > app.py <<'EOF'\nprint('hi')\nEOF"
+    changed, cmd, _ = _reconcile(heredoc, [{"cmd": proven, "exit_code": 0}])
+    assert not changed
+    assert cmd == heredoc
+    assert "\n" in cmd  # not flattened
+
+
+def test_regression_a_longer_command_is_not_an_equivalent_one():
+    """Regression (audit mutation M4): the equivalence must be EXACT, not
+    "contains". ``acme verify --deep`` is a different command from
+    ``acme verify`` — it only adds flags, so the specificity rule alone would
+    wave it through, and substituting it would silently change what the
+    assertion asserts."""
+    changed, cmd, _ = _reconcile(
+        "acme verify",
+        [{"cmd": "acme verify --deep", "exit_code": 0, "output": "ok"}],
+    )
+    assert not changed
+    assert cmd == "acme verify"
+
+
+def test_regression_findings_tool_success_command_is_reconcilable():
+    """A findings tool exits nonzero ON SUCCESS (failure class 4) and is proof
+    only once mark_findings_success has marked it — which is why the orchestrator
+    runs this reconciler AFTER that pass, not before."""
+    from readme2demo.normalize import reconcile_success_command
+
+    plan, log = _success_cmd_fixture(
+        "drift-detect ./src",
+        [{"cmd": "/opt/tools/drift-detect ./src", "exit_code": 3, "output": "2 found"}],
+    )
+    log.entries[0].findings_success = True
+    changed, _ = reconcile_success_command(plan, log)
+    assert changed
+    assert plan.success_criteria.command == "/opt/tools/drift-detect ./src"
+
+
+def test_known_gap_findings_marking_does_not_yet_see_drifted_spellings():
+    """Documents a REAL gap found while auditing this change, so nobody assumes
+    classes 4 and 17 already compose.
+
+    ``mark_findings_success`` matches the plan command with a literal
+    whitespace-only ``_norm``, not with ``normalize_cmd``. So a findings tool
+    invoked by absolute path is never marked, and the reconciler's
+    ``findings_success`` branch stays unreachable in production no matter how
+    the two passes are ordered. Teaching ``mark_findings_success`` the same
+    symmetric equivalence changes which entries enter the grounding candidate
+    set, so it is deliberately NOT bundled into this fix.
+
+    When that is fixed, this test flips to the composing assertion below it.
+    """
+    from readme2demo.normalize import mark_findings_success
+
+    plan, log = _success_cmd_fixture(
+        "drift-detect ./src",
+        [{"cmd": "/opt/tools/drift-detect ./src", "exit_code": 3, "output": "2 found"}],
+    )
+    plan.success_criteria.expected_pattern = "found"
+    assert mark_findings_success(plan, log) == 0  # <- the gap; not the ideal
+    assert not any(e.findings_success for e in log.entries)
+
+
+def test_reconciler_is_ordered_after_findings_marking():
+    """The orchestrator must call the reconciler AFTER mark_findings_success.
+
+    ``normalize()`` re-parses the transcript, so every ``findings_success`` is
+    False until that pass runs; reconciling first would make the branch dead by
+    construction. Pins the call-site ORDER in source, since the two functions
+    are pure and a unit test cannot observe the sequence.
+    """
+    import inspect
+
+    from readme2demo import orchestrator
+
+    src = inspect.getsource(orchestrator.Orchestrator._stage_normalize)
+    assert src.index("mark_findings_success") < src.index("reconcile_success_command")
