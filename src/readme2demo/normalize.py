@@ -19,7 +19,7 @@ from pathlib import Path
 # learns something. distill does not import normalize, so this is cycle-free.
 from readme2demo.distill import _ASSIGN_RE as _ASSIGN_PREFIX_RE
 from readme2demo.engines.base import AgentEngine
-from readme2demo.types import CommandLog, Phase
+from readme2demo.types import CommandLog, Phase, Plan
 
 COMMAND_LOG_FILENAME = "command_log.json"
 
@@ -48,7 +48,7 @@ _DOWNLOAD_INSTALL_RE = re.compile(r"\|\s*(?:sudo\s+)?(?:ba|z)?sh\b|\binstall\b")
 _NONTRIVIAL_ECHO_RE = re.compile(r"[|>`]|\$\(")
 
 
-def validate_success_pattern(plan, log: CommandLog) -> tuple[bool, str]:
+def validate_success_pattern(plan: Plan, log: CommandLog) -> tuple[bool, str]:
     """Reality-check ``plan.success_criteria.expected_pattern`` against the log.
 
     Patterns are LLM-authored (planner, or the agent's ``ADJUSTED_SUCCESS …
@@ -245,7 +245,7 @@ def repo_files_edited(log: CommandLog, repo_dir: Path) -> list[str]:
     return sorted(set(hits))
 
 
-def mark_findings_success(plan, log: CommandLog) -> int:
+def mark_findings_success(plan: Plan, log: CommandLog) -> int:
     """Mark nonzero-exit entries that ARE the successful demo (findings tools).
 
     Drift detectors, linters, and scanners exit nonzero when they find what
