@@ -5,6 +5,81 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-08-07
+
+**Multi-format outputs: the promo cut.** `--formats demo,gif,promo` now
+produces `promo.mp4` — a short marketing cut assembled *from* the run's own
+`demo.mp4`, so the promo can only ever show footage a fresh container really
+produced. The grounding invariant reaches the new artifact intact: every
+`demo_segment` must trace to a step that is both published in the final
+`step_by_step.md` and grounded in `command_log.json`, at least one segment of
+real footage is mandatory, and any command a card puts on screen must be one
+the run can back.
+
+Extra formats are deliberately **not** stages. `produce()` dispatches them
+after render, gated on `manifest.verified` exactly as render is, and every
+builder call is wrapped with the four protected artifacts (`demo.mp4`,
+`step_by_step.md`, `commands.sh`, `demo.tape`) fingerprinted around it. A
+builder that raises, is unimplemented, or writes into the grounding path is
+recorded in `manifest.formats` as `skipped: <reason>` and never fails the run.
+No format is load-bearing.
+
+The podcast, `--narrate` and `--social-cut` tracks remain unbuilt and move to
+a later milestone; `--formats` accepts them today only as a validated surface.
+
+### Added
+- `--formats` output registry: a comma-separated CLI surface validated against
+  `formats.py`, defaulting to today's exact output set (#212, thanks
+  @MohammedAnasNathani).
+- Grounded `promo_script.json` scene plan — one LLM pass behind a pure code
+  validator that rejects any scene citing an unverified step (#169).
+- Pure-ffmpeg promo compositor: title card, speed-ramped crossfade concat of
+  real `demo.mp4` segments, end card, brand kit, 15/30/60s duration presets
+  (#170). `assert_only_demo_footage` audits the FINISHED ffmpeg argv, so a cut
+  that reached for foreign footage is refused structurally, not by intent.
+- `produce()` dispatch for post-render formats, best-effort by contract, with
+  per-format outcomes in `manifest.formats` and LLM spend in
+  `manifest.format_costs` — including on the failure path (#230, #258).
+- Per-stage durations in `readme2demo report` (#204, thanks @kushin25).
+- Pure `placeholder_credential()` / `is_placeholder_credential()` helpers
+  (#240, thanks @Nitjsefnie).
+
+### Fixed
+- **The promo budget is measured in played seconds, not nominal ones.** Demo
+  segments are sped up to fit; comparing the raw sum of scene durations
+  rejected honest, footage-rich plans that render exactly on target — a plan
+  selecting 60s of verified footage for a 30s cut renders at 28.8s and was
+  refused, burning both LLM calls (#278).
+- **verify asserts the command the sandbox proved, not the planner's guess.**
+  `success_criteria.command` is written at ingest, before anything runs. When
+  pip installed a console script into `~/.local/bin` — not on `PATH` — the
+  agent adapted and the assertion did not, so a run whose criterion passed
+  twice was reported UNVERIFIED (#279). The substitution is a one-way partial
+  order: only a literal the log proves exited 0, and only one at least as
+  *specific* as the plan's own command, since unlike grounding this string is
+  executed.
+- **ffmpeg drawtext escape depth is per-character.** `,;[]` need one
+  backslash, `:` two, `'` three, `\` four — and the failure modes differ:
+  too few on `:` makes ffmpeg reject the whole option, too few on `'` renders
+  the card blank, too few on `\` silently drops it. `%` was never an escaping
+  problem but template expansion, now disabled with `expansion=none`, which
+  also stops an LLM-authored `%{...}` from being evaluated into a published
+  video (#281).
+- OpenHands' native `finish` action is read as a marker source, so an agent
+  that reports success through the action rather than a shell is no longer
+  recorded as failed after the agent time is already spent (#259).
+- GitHub deep links (`/tree/...`) are stripped before `git clone` (#215,
+  thanks @MohammedAnasNathani).
+- Single-line fenced JSON responses parse correctly (#118, thanks
+  @pollychen-lab).
+- Missing type hints on plan params (#48, thanks @ulises-jeremias).
+
+### Changed
+- CI caches pip and cancels superseded runs (#102, thanks @ulises-jeremias).
+- `actions/setup-python` 6 → 7 (#228).
+- Stale test counts and missing CHANGELOG footer links corrected (#43, thanks
+  @ulises-jeremias).
+
 ## [0.7.5] — 2026-07-31
 
 Fifteen commits of fixes and groundwork. The user-facing half is a batch of
@@ -391,6 +466,7 @@ Initial public release.
 - Verified `examples/toolhive/` reference run committed as proof.
 
 [Unreleased]: https://github.com/alphacrack/readme2demo/compare/v0.7.5...HEAD
+[0.8.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.8.0
 [0.7.5]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.5
 [0.7.4]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.4
 [0.7.3]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.3
