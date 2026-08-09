@@ -959,8 +959,13 @@ def test_promo_style_and_duration_are_read_defensively_from_config(
     produce(m._run_dir, m, cfg_with_formats("promo"))
     assert seen["render_calls"][0]["style"] == promo_mod.DEFAULT_STYLE
     assert seen["render_calls"][0]["preset"] == promo_mod.DEFAULT_DURATION
-    # The cut is PLANNED for the same budget the compositor then enforces.
-    assert seen["script_calls"][0]["target_duration_s"] == float(promo_mod.DEFAULT_DURATION)
+    # The cut is PLANNED for the same budget the compositor then enforces —
+    # the IDENTICAL (style, preset) pair, not a number derived from it. The
+    # planner's budget violation is that same duration gate applied early, so
+    # any drift between the two makes it police a cut nobody will render.
+    assert seen["script_calls"][0]["style"] == seen["render_calls"][0]["style"]
+    assert seen["script_calls"][0]["preset"] == seen["render_calls"][0]["preset"]
+    assert seen["script_calls"][0]["preset"] == promo_mod.DEFAULT_DURATION
 
     seen2 = install_promo_fakes(monkeypatch)
     m2 = promo_run(tmp_path, name="run2")
@@ -970,7 +975,8 @@ def test_promo_style_and_duration_are_read_defensively_from_config(
     assert produce(m2._run_dir, m2, cfg) == {"promo": PRODUCED}
     assert seen2["render_calls"][0]["style"] == "energetic"
     assert seen2["render_calls"][0]["preset"] == 15
-    assert seen2["script_calls"][0]["target_duration_s"] == 15.0
+    assert seen2["script_calls"][0]["style"] == "energetic"
+    assert seen2["script_calls"][0]["preset"] == 15
 
 
 def test_regression_promo_never_runs_on_an_unverified_run(tmp_path: Path, monkeypatch):

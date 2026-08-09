@@ -139,8 +139,6 @@ class Orchestrator:
             plan_dirty = True
             # escape(): the reason quotes regexes ([0-9]+ etc.) — see above.
             console.print(f"[yellow]Success pattern corrected:[/] {escape(reason)}")
-        if plan_dirty:
-            (self.run_dir / "plan.json").write_text(plan.model_dump_json(indent=2))
         # Findings tools: a nonzero-exit demo command whose output matches the
         # expected pattern IS the success — mark it and persist so grounding,
         # the tape, and output lookups all see it.
@@ -153,6 +151,21 @@ class Orchestrator:
                 f"[dim]{marked} findings-tool command(s) reclassified as "
                 "successful (nonzero exit + expected pattern matched)[/]"
             )
+        # Reality-check the SPELLING of the success command. The planner guessed
+        # it at ingest, before anything ran; the assertion must execute the form
+        # the sandbox actually accepted (absolute exe path, python3, an added
+        # --break-system-packages) or verify fails a run whose criterion really
+        # passed (failure class 17). Ordered AFTER mark_findings_success on
+        # purpose: findings entries exit nonzero ON SUCCESS and only become
+        # proof once that pass has marked them, so running earlier would leave
+        # the reconciler blind to exactly the commands classes 4 and 13 cover.
+        cmd_changed, cmd_reason = normalize_mod.reconcile_success_command(plan, log)
+        if cmd_changed:
+            plan_dirty = True
+            # escape(): the reason quotes shell commands ([ -f x ]) — see above.
+            console.print(f"[yellow]Success command corrected:[/] {escape(cmd_reason)}")
+        if plan_dirty:
+            (self.run_dir / "plan.json").write_text(plan.model_dump_json(indent=2))
         # Agent-cheat detection: edits to repo source can't survive the
         # pristine-clone replay (prompt rule 6). Surface it NOW, not as a
         # mysterious verify failure later.

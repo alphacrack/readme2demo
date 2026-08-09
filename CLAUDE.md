@@ -154,6 +154,80 @@ Each was found on a real run; each has code defenses and a regression test.
     messages, and the shared scanners (`claude_code._is_placeholder`) reject
     captures that are one whole un-filled `<...>` token — protecting
     claude-code too when a model restates its instructions verbatim.
+17. **Success assertion asserts the PLANNER's spelling, not the proven one** —
+    the distilled STEPS carry forms grounding proved (`python3`,
+    `--break-system-packages`, absolute exe paths), but the success-criteria
+    assertion emitted `plan.success_criteria.command` verbatim — a string the
+    planner wrote at ingest, before anything ran. readme2demo's own run
+    (readme2demo-20260806-180604) died on `readme2demo report examples/toolhive`
+    → `command not found`, exit 127, because pip put the console script in
+    `~/.local/bin` and that is not on PATH — while
+    `/home/demo/.local/bin/readme2demo report examples/toolhive` had exited 0
+    TWICE in the same log. Note this is NOT a grounding false-negative (class
+    5): `normalize_cmd` already canonicalizes absolute exe paths, so grounding
+    was correct — the emitted script was simply unrunnable. Defense:
+    `normalize.reconcile_success_command` swaps in the last literal the log
+    proves exited 0 and that `normalize_cmd` considers the same command.
+    **The lesson worth keeping is why that is not sufficient on its own:**
+    `normalize_cmd` is a SYMMETRIC equivalence, which is right for grounding
+    (both sides get the same lossy transform, so a false match needs two
+    independently drifted strings) but unsound when the winner is EXECUTED —
+    the transform is lossy in exactly the tokens that decide which program runs
+    (`/work/.venv/bin/pytest` → `pytest`, `python3` → `python`, dropped
+    `--break-system-packages`). So the swap is a one-way partial order
+    (`_at_least_as_specific`): only a literal equally or MORE specific than the
+    plan's own command may win. It also refuses `exit_code is None` (never
+    observed ≠ succeeded), any literal containing shell control characters
+    (a trailing `;` makes `$(cmd ; 2>&1)` exit 0 regardless — a false POSITIVE
+    on "verified"), and multi-line heredocs. Ordered AFTER
+    `mark_findings_success`, since findings entries are only proof once marked.
+    Whenever a grounding comparison starts being used to CHOOSE something to
+    run, re-derive its safety from scratch — comparison and execution are
+    different uses of the same normalizer.
+
+18. **ffmpeg drawtext escape depth is per-character** — the promo compositor
+    burned card text in via `drawtext=text=...`, escaping every metacharacter
+    with ONE backslash. ffmpeg unescapes a `-filter_complex` value in more than
+    one pass, so the depth depends on which pass consumes the character:
+    `, ; [ ]` (outer/graph) need 1, `:` (inner/option) needs 2, `'` needs 3,
+    `\` needs 4. The three failure modes are what makes this vicious — only the
+    first is loud: too few on `:` makes ffmpeg reject the whole option ("Error
+    parsing global options: Invalid argument", no frame); too few on `'`
+    renders the card BLANK; too few on `\` silently drops it from the text.
+    `%` is not an escaping problem at all — it is drawtext TEMPLATE EXPANSION,
+    fixed with `expansion=none` (which also stops an LLM-authored `%{gmtime}`
+    from being evaluated into a published video). Found by
+    readme2demo-20260806-184032, whose promo died on `Try it: readme2demo
+    report examples/toolhive`. **The process lesson: every pre-existing test
+    asserted the ESCAPER'S OUTPUT and none asserted what ffmpeg does with it,
+    so a full green suite coexisted with an unrenderable promo.** Escaping
+    changes must be closed against a rendered frame from the base image's own
+    ffmpeg — `tests/test_brand.py::TestDrawtextEscapingContract` keeps the
+    property (unescaping in ffmpeg's order returns the author's text).
+
+19. **Native completion signal unread (mirror image of 16)** — OpenHands
+    agents may deliver R2D_SUCCESS through the `finish` ACTION rather than
+    printing it to a shell; the parser scanned agent MESSAGE actions only
+    (neither engine scans command output for markers), so a glow run that
+    built the binary and rendered the README was recorded `outcome: "failed"`
+    and died at normalize with the agent time already spent
+    (`--openai`/`--gemini`/`--anthropic` looked broken). Defense: `finish`
+    joins `message` in `_MARKER_ACTIONS`, and
+    `openhands._finish_text` reads every shape it arrives in — event
+    `message`, args (`final_thought`), and the `finish` tool call's
+    `arguments` as JSON string OR dict, top-level or nested in
+    `tool_call_metadata.model_response`. Class 16's `source == "user"` skip
+    now gates BOTH actions (over-reading and under-reading are fixed
+    together, never traded off), `_is_placeholder` still governs everything
+    harvested, and `task_completed: true` is corroboration only — never
+    success on its own, because an agent can finish having failed. Tool-call
+    identification is default-DENY (`name == "finish"`, or an unnamed call on
+    an event anchored by `tool_call_metadata.function_name`): another call's
+    arguments are a command the agent INTENDS to run, not an outcome. Golden
+    fixture: `tests/fixtures/openhands_glow_trajectory.json`. Residual, still
+    true: an OpenHands agent that only `echo`s R2D_SUCCESS into a shell is
+    reported failed — markers are read from agent text, never from captured
+    command output.
 
 ## The maintenance meta-workflow (how every fix above happened)
 
