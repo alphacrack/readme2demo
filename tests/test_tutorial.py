@@ -766,7 +766,6 @@ def test_gif_preview_warns_on_ffmpeg_failure(tmp_path, monkeypatch, capsys):
     """Regression (#42): a nonzero ffmpeg exit must warn, not vanish silently."""
     from readme2demo import render as render_mod
     from readme2demo.config import Config
-    import subprocess
 
     class _Proc:
         returncode = 1
