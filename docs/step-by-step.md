@@ -1,6 +1,6 @@
 ---
 title: "Install readme2demo and confirm it works — step by step"
-description: "Install readme2demo from source, run its 163-test suite, explore the CLI, and read a verified example run — the whole thing checkable in a clean container with no Docker daemon or API key."
+description: "Install readme2demo from source, run its full test suite, explore the CLI, and read a verified example run — the whole thing checkable in a clean container with no Docker daemon or API key."
 source_repo: "https://github.com/alphacrack/readme2demo"
 ---
 
@@ -30,7 +30,7 @@ no API keys.
 python -m pytest tests/ -q
 ```
 
-You should see all 163 tests pass.
+You should see all tests pass — the suite runs in about a second.
 
 ## Step 3 — Explore the CLI
 
