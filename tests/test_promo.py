@@ -108,15 +108,15 @@ class _FakeDocker:
 # --- the exact argv, pinned ----------------------------------------------------
 
 _TITLE_CARD = (
-    "drawtext=text=r2d:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2-38"
-    ",drawtext=text=Verified:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2+38"
+    "drawtext=text=r2d:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2-38"
+    ",drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2+38"
 )
 _CAPTION = (
-    "drawtext=text=pip install .:fontcolor=#7C6BF2:fontsize=30"
+    "drawtext=text=pip install .:expansion=none:fontcolor=#7C6BF2:fontsize=30"
     ":x=(w-text_w)/2:y=h-text_h-64:box=1:boxcolor=black@0.6:boxborderw=14"
 )
 _END_CARD = (
-    "drawtext=text=pip install readme2demo:fontcolor=#7C6BF2:fontsize=54"
+    "drawtext=text=pip install readme2demo:expansion=none:fontcolor=#7C6BF2:fontsize=54"
     ":x=(w-text_w)/2:y=(h-text_h)/2"
 )
 
@@ -900,7 +900,7 @@ class TestFiltergraph:
         script = _script()
         script.scenes[1].text = "run: readme2demo run <url>"
         graph = build_filtergraph(script, Config(), source_duration_s=SOURCE_DURATION)
-        assert r"text=run\: readme2demo run <url>" in graph
+        assert "text=run" + "\\" * 2 + ": readme2demo run <url>" in graph
 
     def test_multi_line_card_stacks_one_drawtext_per_line(self) -> None:
         graph = build_filtergraph(_script(), Config(), source_duration_s=SOURCE_DURATION)

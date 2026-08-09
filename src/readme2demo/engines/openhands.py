@@ -24,6 +24,9 @@ Trajectory shapes this parser understands:
 * Message actions: ``{"action": "message", "args": {"content": ...}}`` (or a
   top-level ``"content"``/``"message"`` field) — scanned for FIX/BLOCKED/
   SUCCESS markers.
+* Finish actions: ``{"action": "finish", ...}`` — OpenHands' NATIVE completion
+  signal and the other place those same markers arrive; scanned exactly like
+  an agent message. See :func:`_finish_text` for the shapes it can take.
 * File edits: ``{"action": "write" | "edit", "args": {"path": ...}}``.
 
 There is no terminal ``result`` event in a trajectory, so cost and turn count
@@ -34,6 +37,7 @@ from __future__ import annotations
 
 import json
 import posixpath
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
@@ -56,6 +60,18 @@ from readme2demo.types import (
 
 # Action names whose args.path counts as a file edit.
 _FILE_EDIT_ACTIONS = frozenset({"write", "edit"})
+
+# Actions whose agent-authored text carries FIX/BLOCKED/ADJUSTED/SUCCESS
+# markers. ``finish`` is OpenHands' native "I'm done" action: an agent that
+# follows the prompt exactly may deliver R2D_SUCCESS through it instead of
+# printing it to a shell, so it is a marker source too (failure class 17).
+_MARKER_ACTIONS = frozenset({"message", "finish"})
+
+# Depth cap for the tolerant walks below. The deepest real shape seen is the
+# finish tool call at event -> tool_call_metadata -> model_response ->
+# choices -> [i] -> message -> tool_calls (6 levels); the cap keeps a
+# pathological or cyclic-looking payload from costing anything.
+_MAX_SCAN_DEPTH = 8
 
 
 def _load_events(raw: str) -> list[dict[str, Any]]:
@@ -109,6 +125,127 @@ def _message_text(event: dict[str, Any]) -> str:
         if isinstance(value, str):
             return value
     return ""
+
+
+def _iter_strings(node: Any, depth: int = 0) -> Iterator[str]:
+    """Yield every string reachable inside a nested dict/list payload.
+
+    Deliberately schema-free: OpenHands has moved the finish text between
+    ``final_thought``, ``message`` and ``thought`` across releases, so the
+    parser reads whatever strings the payload carries rather than betting on
+    one key name. Pure; depth-limited by :data:`_MAX_SCAN_DEPTH`.
+    """
+    if depth > _MAX_SCAN_DEPTH:
+        return
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _iter_strings(value, depth + 1)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _iter_strings(value, depth + 1)
+
+
+def _iter_tool_calls(node: Any, depth: int = 0) -> Iterator[dict[str, Any]]:
+    """Yield tool-call dicts found under any ``tool_calls`` list in ``node``.
+
+    The list sits at the top level of the event in some trajectory versions
+    and inside ``tool_call_metadata.model_response.choices[].message`` in
+    others (the shape OpenHands 0.48 writes) — searching for the key instead
+    of a fixed path survives both.
+    """
+    if depth > _MAX_SCAN_DEPTH:
+        return
+    if isinstance(node, dict):
+        calls = node.get("tool_calls")
+        if isinstance(calls, list):
+            for call in calls:
+                if isinstance(call, dict):
+                    yield call
+        for value in node.values():
+            yield from _iter_tool_calls(value, depth + 1)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _iter_tool_calls(value, depth + 1)
+
+
+def _tool_call_arguments(call: dict[str, Any], named_finish: bool) -> Optional[Any]:
+    """Return a ``finish`` tool call's arguments payload, else None.
+
+    Handles the nested (``{"function": {"name", "arguments"}}``) and flat
+    (``{"name", "arguments"}``) shapes; ``arguments`` may be a JSON string or
+    an already-parsed dict, and an unparseable string is returned as-is so a
+    marker inside it is still visible to a substring scan.
+
+    Identifying the tool is default-DENY: only a call that names ``finish``
+    is read, because another call's arguments are a command the agent
+    *intends* to run (``echo R2D_SUCCESS``), not a claim about the outcome.
+    An UNNAMED call is read only when ``named_finish`` says the event itself
+    is anchored to the finish tool (``tool_call_metadata.function_name``) —
+    that keeps streamed/partial tool calls, where the name arrives in an
+    earlier delta than the arguments, working without trusting an anonymous
+    payload on its own.
+    """
+    function = call.get("function")
+    if isinstance(function, dict):
+        name = function.get("name")
+        arguments = function.get("arguments")
+    else:
+        name = call.get("name")
+        arguments = call.get("arguments", call.get("args"))
+    if isinstance(name, str):
+        if name != "finish":
+            return None
+    elif not named_finish:
+        return None
+    if isinstance(arguments, str):
+        try:
+            return json.loads(arguments)
+        except (json.JSONDecodeError, ValueError):
+            return arguments  # drifted/partial JSON — scan the raw text
+    if isinstance(arguments, (dict, list)):
+        return arguments
+    return None
+
+
+def _finish_text(event: dict[str, Any]) -> str:
+    """Collect every agent-authored string a ``finish`` action carries.
+
+    A ``finish`` action is OpenHands' native completion signal, and its text
+    lives in a different place in almost every version/provider combination:
+
+    * ``event["message"]`` — the human-readable summary;
+    * ``event["args"]`` — ``final_thought`` (0.48), ``message``, ``thought``;
+    * the ``arguments`` of the ``finish`` tool call, as a JSON string or an
+      already-parsed dict, either at the top of the event or nested in
+      ``tool_call_metadata.model_response``.
+
+    All of them are read and joined, so a marker in any one is seen. The
+    agent's own ``task_completed`` flag rides along in the text as
+    corroboration; it never grounds success by itself — see
+    :meth:`OpenHandsEngine.parse_transcript`.
+    """
+    parts: list[str] = []
+    message = event.get("message")
+    if isinstance(message, str):
+        parts.append(message)
+    parts.extend(_iter_strings(event.get("args")))
+    metadata = event.get("tool_call_metadata")
+    named_finish = (
+        isinstance(metadata, dict) and metadata.get("function_name") == "finish"
+    )
+    for call in _iter_tool_calls(event):
+        arguments = _tool_call_arguments(call, named_finish)
+        if arguments is not None:
+            parts.extend(_iter_strings(arguments))
+    seen: set[str] = set()
+    unique: list[str] = []
+    for part in parts:
+        if part and part not in seen:
+            seen.add(part)
+            unique.append(part)
+    return "\n".join(unique)
 
 
 @register
@@ -260,7 +397,7 @@ class OpenHandsEngine(AgentEngine):
                     entries.append(entry)
                     pending.append(entry)
 
-            elif action == "message":
+            elif action in _MARKER_ACTIONS:
                 if event.get("source") == "user":
                     # OpenHands echoes the TASK PROMPT into the trajectory as
                     # a source="user" message action (plus its own
@@ -270,9 +407,18 @@ class OpenHandsEngine(AgentEngine):
                     # R2D_SUCCESS) as real markers — a run whose agent
                     # genuinely succeeded was once reported blocked by its own
                     # instructions. Only agent-sourced text carries markers.
+                    # (Guards `finish` too: same rule, one gate.)
                     continue
-                text = _message_text(event)
+                # A finish action hides its text in several places; a message
+                # action keeps it in args.content. Everything downstream is
+                # identical — same scanners, same placeholder rejection.
+                text = (
+                    _finish_text(event) if action == "finish" else _message_text(event)
+                )
                 if SUCCESS_MARKER in text:
+                    # The marker is the proof. `task_completed: true` is in
+                    # `text` as corroboration only — an agent can call finish
+                    # having failed, so it never flips the outcome alone.
                     marker_seen = True
                 reason = scan_markers(text, fixes)
                 if reason is not None and blocked_reason is None:

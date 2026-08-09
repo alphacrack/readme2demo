@@ -35,16 +35,40 @@ from .config import Config
 # applied (backslash first, so escapes we add below are not re-escaped).
 #   \  escape char (drawtext option value + filtergraph)
 #   %  drawtext text-expansion introducer (%{...})
-#   :  filter-option separator
+#   :  filter-option separator — DOUBLE-escaped, see below
 #   '  quote char
 #   [ ] , ;  filtergraph pad-label / filter / chain separators — repo names and
 #            version strings genuinely contain brackets and commas, so a literal
 #            one must not be read as graph syntax.
+#
+# The backslash counts are NOT uniform, and that is the whole point (#281, run
+# readme2demo-20260806-184032). ffmpeg un-escapes a ``-filter_complex`` value in
+# MORE THAN ONE pass — the filtergraph description is unescaped, then each
+# filter's option values are unescaped again — so a character's escape depth
+# depends on which pass treats it as special:
+#
+#   ,  ;  [  ]   special to the OUTER (graph) pass only          -> 1 backslash
+#   :            special to the INNER (option) pass              -> 2 backslashes
+#   '            quoting, consumed by both passes                -> 3 backslashes
+#   \            the escape character itself, halved every pass  -> 4 backslashes
+#
+# Getting a count wrong fails in three different ways, and only the first is
+# loud: too few on ``:`` makes ffmpeg reject the whole option ("Error parsing
+# global options: Invalid argument"); too few on ``'`` renders the card BLANK;
+# too few on ``\`` silently drops the backslash from the text. Too MANY on the
+# graph separators breaks parsing just as surely as too few on ``:``.
+#
+# ``%`` is deliberately absent: it is not an escaping problem at all but a
+# template-expansion one, disabled at the filter level with ``expansion=none``
+# in :func:`title_card_drawtext`.
+#
+# Every count here was verified by RENDERING a frame with the base image's own
+# ffmpeg and reading the pixels — a graph that merely parses can still draw the
+# wrong text. ``tests/test_brand.py`` pins each one.
 _DRAWTEXT_ESCAPES: tuple[tuple[str, str], ...] = (
-    ("\\", r"\\"),
-    ("%", r"\%"),
-    (":", r"\:"),
-    ("'", r"\'"),
+    ("\\", "\\" * 4),
+    (":", "\\" * 2 + ":"),
+    ("'", "\\" * 3 + "'"),
     ("[", r"\["),
     ("]", r"\]"),
     (",", r"\,"),
@@ -88,6 +112,12 @@ def title_card_drawtext(
     filtergraph — this builds the fragment, it does not run ffmpeg.
     """
     opts = [f"text={escape_drawtext(text)}"]
+    # Card text is LITERAL. Without this, drawtext treats it as a template: a
+    # bare `%` makes the whole card render EMPTY ("Stray %" — a silent failure,
+    # not an error), and `%{...}` is evaluated, so an LLM-authored card reading
+    # "100%{gmtime}" would either vanish or burn machine state into the video.
+    # Nothing about a card is ever an ffmpeg expression (#281).
+    opts.append("expansion=none")
     if cfg.brand_font:
         opts.append(f"font={cfg.brand_font}")
     opts.append(f"fontcolor={cfg.brand_color}")
