@@ -347,6 +347,7 @@ def test_anthropic_default_model_matches_config():
     assert llm.PROVIDERS["anthropic"].default_model == Config().model
     # Identity, not just equality — fails the moment wiring breaks via fallback
     assert Config().model is llm.DEFAULT_ANTHROPIC_MODEL
+    assert llm.PROVIDERS["anthropic"].default_model is llm.DEFAULT_ANTHROPIC_MODEL
 
 
 @pytest.mark.parametrize(
