@@ -311,8 +311,11 @@ def test_run_reports_unknown_config_key_without_traceback(tmp_path):
     result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
 
     assert result.exit_code == 2
+    # Rich wraps long tmp paths at ~80 cols, inserting a break inside the
+    # filename (`readme2demo.to\nml`). Strip whitespace before matching.
+    compact = "".join(result.output.split())
     assert "Unknown config key 'max_turn'" in result.output
-    assert config_file.name in result.output
+    assert config_file.name in compact
     assert "Traceback" not in result.output
 
 
@@ -750,7 +753,18 @@ def test_report_bracketed_path_is_escaped(tmp_path):
     runner = CliRunner()
     result = runner.invoke(app, ["report", str(bad)])
     assert result.exit_code == 2
-    assert "[old]" in result.output or "run" in result.output
+    assert "[old]" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_resume_bracketed_path_is_escaped(tmp_path, monkeypatch):
+    """Regression (#38): resume on a non-run-dir must escape Rich markup (class 15)."""
+    monkeypatch.setattr("readme2demo.cli._preflight", lambda cfg: None)
+    bad = tmp_path / "run [old] dir"
+    bad.mkdir()
+    result = runner.invoke(app, ["resume", str(bad)])
+    assert result.exit_code == 2
+    assert "[old]" in result.output
     assert "Traceback" not in result.output
 
 def test_report_json_and_markdown_are_mutually_exclusive(tmp_path):
