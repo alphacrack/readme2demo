@@ -311,8 +311,11 @@ def test_run_reports_unknown_config_key_without_traceback(tmp_path):
     result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
 
     assert result.exit_code == 2
+    # Rich wraps long tmp paths at ~80 cols, inserting a break inside the
+    # filename (`readme2demo.to\nml`). Strip whitespace before matching.
+    compact = "".join(result.output.split())
     assert "Unknown config key 'max_turn'" in result.output
-    assert config_file.name in result.output
+    assert config_file.name in compact
     assert "Traceback" not in result.output
 
 
@@ -377,6 +380,7 @@ def test_regression_missing_openai_sdk_fails_preflight(monkeypatch, capsys):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     monkeypatch.setitem(sys.modules, "openai", None)  # import -> ImportError
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
     try:
         with pytest.raises(typer.Exit):
             cli_mod._preflight(Config(llm_backend="openai"))
@@ -435,7 +439,11 @@ def test_regression_docker_daemon_down_fails_preflight(monkeypatch, capsys) -> N
     import shutil as _shutil
     monkeypatch.setattr(_shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else "/usr/bin/claude")
 
+    captured: dict[str, object] = {}
+
     def _fake_run(*a: object, **kw: object) -> object:
+        captured.update(kw)
+
         class R:
             returncode = 1
             stdout = ""
@@ -448,6 +456,7 @@ def test_regression_docker_daemon_down_fails_preflight(monkeypatch, capsys) -> N
         cli_mod._preflight(Config(dry_run=False))
     assert exc.value.exit_code == 2
     assert "Docker is not usable" in capsys.readouterr().out
+    assert captured.get("timeout") == 5
 
 
 def test_regression_docker_daemon_down_not_checked_in_dry_run(monkeypatch, capsys) -> None:
@@ -477,6 +486,7 @@ def test_non_dry_run_still_requires_engine_credential(monkeypatch, capsys):
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     monkeypatch.setattr("readme2demo.llm.shutil.which", lambda _: "/usr/bin/claude")
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
     try:
         with pytest.raises(typer.Exit):
             cli_mod._preflight(Config(dry_run=False))
@@ -495,6 +505,7 @@ def test_preflight_rejects_unknown_backend_cleanly(monkeypatch, capsys):
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
     with pytest.raises(typer.Exit):
         cli_mod._preflight(Config(llm_backend="gpt"))
     assert "Unknown LLM backend" in capsys.readouterr().out
@@ -521,6 +532,7 @@ def test_bare_llm_backend_gemini_without_model_fails_preflight(monkeypatch, caps
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
     try:
         with pytest.raises(typer.Exit):
             cli_mod._preflight(Config(llm_backend="gemini"))
