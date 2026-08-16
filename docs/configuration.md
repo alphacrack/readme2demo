@@ -13,7 +13,7 @@ committed; `readme2demo.toml.example` is the tracked reference.
 
 ```toml
 # Agent engine
-engine = "claude-code"        # or "openhands"
+engine = "claude-code"        # or "openhands" (experimental)
 model = "claude-sonnet-5"     # planner/distiller/tutorial passes
 llm_backend = "auto"          # auto | api | claude-cli | gemini | openai
 max_turns = 60
@@ -34,12 +34,12 @@ verify_timeout_s = 900
 verify_retries = 1
 distill_retries = 1
 skip_video = false
-formats = ["demo", "gif"]  # demo, gif, promo (promo needs brand_logo/color/font)
+formats = ["demo", "gif"]  # demo, gif, promo (brand_* keys are optional polish for promo)
 
 # Layout
 runs_dir = "runs"
-step_by_step = "path/to/guide.md"  # optional external guide (-s/--step-by-step)
-brand_logo = "assets/logo.png"      # optional: raster logo for promo/social cuts
+# step_by_step = "path/to/guide.md"  # optional external guide (-s/--step-by-step)
+# brand_logo = "assets/logo.png"     # optional: point at a real .png/.jpg — validated at load
 brand_color = "#7C6BF2"
 brand_font = "Arial"
 ```
@@ -48,7 +48,7 @@ brand_font = "Arial"
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `engine` | `"claude-code"` | Agent engine (`claude-code` or `openhands`) |
+| `engine` | `"claude-code"` | Agent engine (`claude-code` or `openhands` (experimental)) |
 | `model` | `"claude-sonnet-5"` | Model for planner/distiller/tutorial LLM calls |
 | `llm_backend` | `"auto"` | LLM backend (`auto`/`api`/`claude-cli`/`gemini`/`openai`) |
 | `max_turns` | `60` | Max agent turns before timeout |
@@ -71,6 +71,7 @@ brand_font = "Arial"
 | `brand_logo` | `null` | Raster logo (`.png`/`.jpg`/`.jpeg`) for promo title/end cards |
 | `brand_color` | `"#7C6BF2"` | Hex accent (`#RRGGBB`) for promo drawtext |
 | `brand_font` | `null` | Font name for promo drawtext (resolved in container) |
+| `vhs_image` | `null` | Deprecated since v0.6.1 — accepted and ignored; use `base_image` |
 
 ## Authentication
 
