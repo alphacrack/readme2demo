@@ -311,8 +311,11 @@ def test_run_reports_unknown_config_key_without_traceback(tmp_path):
     result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
 
     assert result.exit_code == 2
+    # Rich wraps long tmp paths at ~80 cols, inserting a break inside the
+    # filename (`readme2demo.to\nml`). Strip whitespace before matching.
+    compact = "".join(result.output.split())
     assert "Unknown config key 'max_turn'" in result.output
-    assert config_file.name in result.output
+    assert config_file.name in compact
     assert "Traceback" not in result.output
 
 
@@ -434,6 +437,40 @@ def test_non_dry_run_still_requires_engine_credential(monkeypatch, capsys):
     finally:
         llm.set_backend("auto")
     assert "ANTHROPIC_API_KEY" in capsys.readouterr().out
+
+
+def test_preflight_docker_missing_uses_shared_constant(monkeypatch, capsys):
+    """Regression (#41): preflight docker-missing text is DOCKER_NOT_FOUND_MSG."""
+    import shutil as shutil_mod
+
+    from readme2demo import cli as cli_mod
+    from readme2demo import llm
+    from readme2demo.config import Config
+    from readme2demo.sandbox import DOCKER_NOT_FOUND_MSG
+
+    class _FakeEngine:
+        def resolve_env(self) -> dict:
+            return {}
+
+        def check_image(self, image: str) -> None:
+            return None
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
+    monkeypatch.setattr(llm, "check_sdk", lambda b: None)
+    monkeypatch.setattr(llm, "check_model", lambda b, m: None)
+    monkeypatch.setattr("readme2demo.engines.get_engine", lambda name: _FakeEngine())
+    monkeypatch.setattr(
+        shutil_mod,
+        "which",
+        lambda name: "/usr/bin/claude" if name == "claude" else None,
+    )
+    try:
+        with pytest.raises(typer.Exit) as exc:
+            cli_mod._preflight(Config(dry_run=False))
+    finally:
+        llm.set_backend("auto")
+    assert exc.value.exit_code == 2
+    assert DOCKER_NOT_FOUND_MSG in capsys.readouterr().out
 
 
 def test_preflight_rejects_unknown_backend_cleanly(monkeypatch, capsys):
