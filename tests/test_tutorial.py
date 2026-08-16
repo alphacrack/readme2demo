@@ -806,6 +806,21 @@ def test_gif_preview_warns_on_timeout(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "GIF preview timed out after 300s" in out
 
+
+def test_gif_preview_warns_on_oserror(tmp_path, monkeypatch, capsys):
+    """Regression (#42): OSError must warn rather than vanish silently."""
+    from readme2demo import render as render_mod
+    from readme2demo.config import Config
+
+    def _raiser(*a, **k):
+        raise OSError(2, "No such file or directory", "docker")
+
+    monkeypatch.setattr(render_mod.subprocess, "run", _raiser)
+    render_mod._generate_gif_preview(tmp_path, "img", Config())
+    out = capsys.readouterr().out
+    assert "GIF preview generation failed" in out
+    assert "No such file or directory" in out
+
 def test_write_badge_json_roundtrip(tmp_path: Path):
     import json as _json
 
