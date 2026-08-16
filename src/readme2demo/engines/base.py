@@ -76,6 +76,40 @@ class EngineError(RuntimeError):
     pass
 
 
+def inspect_local_image(image: str) -> None:
+    """Raise EngineError if ``image`` is not present on the local daemon.
+
+    Docker CLI missing, daemon down, timeouts, and OSError are silent —
+    those belong to the CLI's Docker checks, not this probe.
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("docker") is None:
+        return
+    try:
+        proc = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=5,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return
+    if proc.returncode == 0:
+        return
+    detail = (proc.stderr or proc.stdout or "").strip()
+    lower = detail.lower()
+    if "docker daemon" in lower or "docker api" in lower or "cannot connect" in lower:
+        return
+    tail = detail.splitlines()[-1].strip() if detail else "not found"
+    raise EngineError(
+        f"Sandbox image {image!r} is not available locally ({tail}). "
+        "Build or pull it and retry."
+    )
+
+
 class AgentEngine(ABC):
     """One AI agent backend (claude-code, openhands, ...)."""
 
@@ -89,14 +123,17 @@ class AgentEngine(ABC):
     def check_image(self, image: str) -> None:
         """Preflight probe that ``image`` can actually run this engine.
 
-        Default: no-op. Engines whose runtime is NOT in the standard base
-        image override this to fail fast — with build instructions — before
-        a run directory is created, instead of dying mid-run with a bare
-        exit 127 and no transcript.
+        Default: ``docker image inspect`` (local presence). Docker-missing and
+        daemon-down are silent — those belong to the CLI's Docker checks.
+        Engines whose runtime is NOT in the standard base image override this
+        to fail fast — with build instructions — before a run directory is
+        created, instead of dying mid-run with a bare exit 127 and no
+        transcript.
 
         Raises:
             EngineError: when the image cannot run this engine.
         """
+        inspect_local_image(image)
 
     @abstractmethod
     def required_env(self) -> list[str]:

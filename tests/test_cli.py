@@ -311,8 +311,11 @@ def test_run_reports_unknown_config_key_without_traceback(tmp_path):
     result = runner.invoke(app, ["run", _URL, "--config", str(config_file)])
 
     assert result.exit_code == 2
+    # Rich wraps long tmp paths at ~80 cols, inserting a break inside the
+    # filename (`readme2demo.to\nml`). Strip whitespace before matching.
+    compact = "".join(result.output.split())
     assert "Unknown config key 'max_turn'" in result.output
-    assert config_file.name in result.output
+    assert config_file.name in compact
     assert "Traceback" not in result.output
 
 
@@ -377,6 +380,8 @@ def test_regression_missing_openai_sdk_fails_preflight(monkeypatch, capsys):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     monkeypatch.setitem(sys.modules, "openai", None)  # import -> ImportError
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+    monkeypatch.setattr(cli_mod, "_docker_image_detail", lambda image: None)
     try:
         with pytest.raises(typer.Exit):
             cli_mod._preflight(Config(llm_backend="openai"))
@@ -428,6 +433,8 @@ def test_non_dry_run_still_requires_engine_credential(monkeypatch, capsys):
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     monkeypatch.setattr("readme2demo.llm.shutil.which", lambda _: "/usr/bin/claude")
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+    monkeypatch.setattr(cli_mod, "_docker_image_detail", lambda image: None)
     try:
         with pytest.raises(typer.Exit):
             cli_mod._preflight(Config(dry_run=False))
@@ -446,6 +453,8 @@ def test_preflight_rejects_unknown_backend_cleanly(monkeypatch, capsys):
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+    monkeypatch.setattr(cli_mod, "_docker_image_detail", lambda image: None)
     with pytest.raises(typer.Exit):
         cli_mod._preflight(Config(llm_backend="gpt"))
     assert "Unknown LLM backend" in capsys.readouterr().out
@@ -472,6 +481,8 @@ def test_bare_llm_backend_gemini_without_model_fails_preflight(monkeypatch, caps
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+    monkeypatch.setattr(cli_mod, "_docker_image_detail", lambda image: None)
     try:
         with pytest.raises(typer.Exit):
             cli_mod._preflight(Config(llm_backend="gemini"))
@@ -880,3 +891,157 @@ def test_parse_formats_unit():
         parse_formats("podcast")
     # ...and the now-wired format is accepted.
     assert parse_formats("promo") == ["promo"]
+
+
+def _stub_doctor_env(monkeypatch, *, docker: bool = True, creds: bool = True):
+    """Cheap doctor/preflight stubs: no real docker, no network."""
+    import shutil as shutil_mod
+
+    from readme2demo import cli as cli_mod
+    from readme2demo import llm
+
+    class _FakeEngine:
+        default_image = None
+
+        def resolve_env(self) -> dict:
+            if not creds:
+                from readme2demo.engines.base import EngineError
+                raise EngineError(
+                    "Engine 'claude-code' requires env vars that are not set: "
+                    "ANTHROPIC_API_KEY"
+                )
+            return {}
+
+    monkeypatch.setattr(llm, "check_sdk", lambda b: None)
+    monkeypatch.setattr(llm, "check_model", lambda b, m: None)
+    monkeypatch.setattr("readme2demo.engines.get_engine", lambda name: _FakeEngine())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
+    if docker:
+        monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+        monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+        monkeypatch.setattr(cli_mod, "_docker_image_detail", lambda image: None)
+    else:
+        monkeypatch.setattr(
+            shutil_mod,
+            "which",
+            lambda name: "/usr/bin/claude" if name == "claude" else None,
+        )
+    return cli_mod, llm
+
+
+def test_doctor_all_checks_pass(monkeypatch):
+    """Regression (#12): doctor green path prints every row and exits 0."""
+    _, llm = _stub_doctor_env(monkeypatch)
+    try:
+        result = runner.invoke(app, ["doctor"])
+    finally:
+        llm.set_backend("auto")
+    assert result.exit_code == 0
+    assert "all checks passed" in result.output
+    assert "LLM backend" in result.output
+    assert "Docker CLI" in result.output
+    assert "Engine credential" in result.output
+    assert "Base image" in result.output
+
+
+def test_doctor_missing_docker_fails(monkeypatch):
+    """Regression (#12): missing docker CLI is a red row, exit 1."""
+    _, llm = _stub_doctor_env(monkeypatch, docker=False)
+    try:
+        result = runner.invoke(app, ["doctor"])
+    finally:
+        llm.set_backend("auto")
+    assert result.exit_code == 1
+    assert "Docker CLI" in result.output
+    assert "not found" in result.output
+    assert "Base image" not in result.output
+
+
+def test_doctor_dry_run_skips_docker(monkeypatch):
+    """Regression (#12): --dry-run skips Docker/engine rows, same as run."""
+    _, llm = _stub_doctor_env(monkeypatch, docker=False, creds=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    try:
+        result = runner.invoke(app, ["doctor", "--dry-run"])
+    finally:
+        llm.set_backend("auto")
+    assert result.exit_code == 0
+    assert "LLM backend" in result.output
+    assert "Docker CLI" not in result.output
+    assert "Engine credential" not in result.output
+    assert "Base image" not in result.output
+    assert "all checks passed" in result.output
+
+
+def test_doctor_credential_is_not_labelled_base_image(monkeypatch):
+    """Regression (#12): missing engine auth is Engine credential, not image."""
+    _, llm = _stub_doctor_env(monkeypatch, creds=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    try:
+        result = runner.invoke(app, ["doctor"])
+    finally:
+        llm.set_backend("auto")
+    assert result.exit_code == 1
+    assert "Engine credential" in result.output
+    assert "ANTHROPIC_API_KEY" in result.output
+    # The image row is a separate inspect, not the credential error.
+    assert "Base image" in result.output
+    image_lines = [ln for ln in result.output.splitlines() if "Base image" in ln]
+    assert image_lines
+    assert "ANTHROPIC_API_KEY" not in image_lines[0]
+
+
+def test_doctor_missing_image_fails(monkeypatch):
+    """Regression (#12): docker image inspect failure is the Base image row."""
+    cli_mod, llm = _stub_doctor_env(monkeypatch)
+    monkeypatch.setattr(
+        cli_mod,
+        "_docker_image_detail",
+        lambda image: f"Sandbox image {image!r} is not available locally",
+    )
+    try:
+        result = runner.invoke(app, ["doctor"])
+    finally:
+        llm.set_backend("auto")
+    assert result.exit_code == 1
+    assert "Base image" in result.output
+    assert "not available locally" in result.output
+
+
+def test_doctor_forwards_engine_flag(monkeypatch):
+    """Regression (#12): --engine reaches get_engine (not only toml/default)."""
+    seen: list[str] = []
+
+    class _FakeEngine:
+        default_image = None
+
+        def resolve_env(self) -> dict:
+            return {}
+
+    def _get(name: str):
+        seen.append(name)
+        return _FakeEngine()
+
+    import shutil as shutil_mod
+
+    from readme2demo import cli as cli_mod
+    from readme2demo import llm
+
+    monkeypatch.setattr(llm, "check_sdk", lambda b: None)
+    monkeypatch.setattr(llm, "check_model", lambda b, m: None)
+    monkeypatch.setattr("readme2demo.engines.get_engine", _get)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_MODEL", "m")
+    monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+    monkeypatch.setattr(cli_mod, "_docker_image_detail", lambda image: None)
+    try:
+        result = runner.invoke(app, ["doctor", "--engine", "openhands"])
+    finally:
+        llm.set_backend("auto")
+    assert result.exit_code == 0
+    assert "openhands" in seen
+    assert set(seen) == {"openhands"}

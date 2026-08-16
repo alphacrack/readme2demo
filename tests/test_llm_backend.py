@@ -864,8 +864,54 @@ def test_openhands_check_image_docker_missing_is_silent(monkeypatch):
     OpenHandsEngine().check_image("readme2demo/base:latest")  # no raise
 
 
-def test_claude_engine_check_image_is_noop():
-    ClaudeCodeEngine().check_image("readme2demo/base:latest")  # base-class no-op
+def test_claude_engine_check_image_inspects(monkeypatch):
+    """Default check_image is docker image inspect, timeout=5 (not a no-op)."""
+    captured: dict[str, object] = {}
+
+    class _Proc:
+        returncode = 0
+        stdout = "[]"
+        stderr = ""
+
+    def _fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured.update(kw)
+        return _Proc()
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    import shutil as shutil_mod
+
+    monkeypatch.setattr(shutil_mod, "which", lambda name: "/usr/bin/docker")
+    ClaudeCodeEngine().check_image("readme2demo/base:latest")
+    assert captured["cmd"][:4] == [
+        "docker", "image", "inspect", "readme2demo/base:latest",
+    ]
+    assert captured.get("timeout") == 5
+
+
+def test_claude_engine_check_image_missing_raises(monkeypatch):
+    class _Proc:
+        returncode = 1
+        stdout = ""
+        stderr = "Error: No such image: readme2demo/base:latest"
+
+    monkeypatch.setattr(
+        "subprocess.run", lambda cmd, **kw: _Proc()
+    )
+    import shutil as shutil_mod
+
+    monkeypatch.setattr(shutil_mod, "which", lambda name: "/usr/bin/docker")
+    from readme2demo.engines.base import EngineError
+
+    with pytest.raises(EngineError, match="not available locally"):
+        ClaudeCodeEngine().check_image("readme2demo/base:latest")
+
+
+def test_claude_engine_check_image_docker_missing_is_silent(monkeypatch):
+    import shutil as shutil_mod
+
+    monkeypatch.setattr(shutil_mod, "which", lambda name: None)
+    ClaudeCodeEngine().check_image("readme2demo/base:latest")  # no raise
 
 
 def test_regression_agent_stderr_copied_to_run_dir(tmp_path, monkeypatch):

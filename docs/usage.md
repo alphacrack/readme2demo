@@ -39,6 +39,18 @@ provide both. At least one is required.
 | `--skip-video` / `--with-video` | Skip or force VHS rendering. |
 | `--allow-docker-socket` | Mount the host Docker socket into the sandbox. Security tradeoff — trusted repos only. |
 
+## Check your setup
+
+`readme2demo doctor` prints a checklist (LLM backend, Docker CLI/daemon, engine
+credential, base image) and exits `1` if anything is missing. Same probes as
+`run` preflight, rendered as rows instead of a fail-fast dump:
+
+```bash
+readme2demo doctor
+readme2demo doctor --engine openhands --llm-backend gemini
+readme2demo doctor --dry-run   # LLM only — matches a --dry-run run
+```
+
 ## Resuming and inspecting runs
 
 Runs are crash-safe and resumable. Every stage records its transition in
