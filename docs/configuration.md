@@ -44,6 +44,19 @@ brand_color = "#7C6BF2"
 brand_font = "Arial"
 ```
 
+That block is copy-paste runnable: CI loads it verbatim through `Config.load`
+(`tests/test_config.py::TestDocumentedExample`), from an arbitrary working
+directory, so it can never document a file this repo happens to own. Keys whose
+value is a path the loader validates stay commented out for that reason —
+`brand_logo` must already exist and be a `.png`/`.jpg`/`.jpeg` or `Config.load`
+raises `brand_logo file not found` before a run starts. Uncomment it, pointing
+at a real file, when you want branded cuts:
+
+| Commented key | Uncomment as | Loader requires |
+|-----|---------|---------|
+| `brand_logo` | `brand_logo = "assets/logo.png"` | existing file, `.png`/`.jpg`/`.jpeg` |
+| `step_by_step` | `step_by_step = "docs/guide.md"` | nothing at load; read at run time |
+
 ### All `Config` keys — defaults & purpose
 
 | Key | Default | Purpose |
