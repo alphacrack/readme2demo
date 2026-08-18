@@ -6,6 +6,7 @@
     readme2demo run -gr https://github.com/example/tool -s ./my_guide.md  # both
     readme2demo resume runs/tool-20260702-... --from-stage render
     readme2demo report runs/tool-20260702-...
+    readme2demo doctor
 
 The repo is OPTIONAL: pass it positionally or with -gr/--github-repo, supply a
 step-by-step guide with -s/--step-by-step, or both. At least one is required;
@@ -18,7 +19,7 @@ import sys
 from pathlib import Path
 import json
 from difflib import get_close_matches
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import typer
 from pydantic import ValidationError
@@ -592,8 +593,57 @@ def report(
     raise typer.Exit(_report_exit_code(manifest))
 
 
-def _preflight(cfg: Config) -> None:
-    """Fail fast, before creating a run dir, if the environment can't work."""
+class Check(NamedTuple):
+    """One preflight/doctor row. Collected once, rendered by each command."""
+
+    name: str
+    ok: bool
+    detail: str
+
+
+def _docker_daemon_detail() -> str | None:
+    """Probe ``docker info``; return daemon detail string or None if healthy."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=5,
+        )
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            return tail[-1].strip() if tail else "docker info failed"
+        return None
+    except FileNotFoundError:
+        return None  # docker CLI missing already reported
+    except OSError as e:
+        line = str(e).strip().splitlines()[-1].strip() if str(e).strip() else ""
+        return line or "unknown error"
+    except subprocess.TimeoutExpired:
+        return "docker info timed out"
+
+
+def _docker_image_detail(image: str) -> str | None:
+    """Return inspect failure detail, or None if the image is local."""
+    from readme2demo.engines.base import EngineError, inspect_local_image
+
+    try:
+        inspect_local_image(image)
+    except EngineError as e:
+        return str(e)
+    return None
+
+
+def _collect_preflight_checks(cfg: Config, *, verbose: bool = True) -> list[Check]:
+    """Run each preflight probe once. Shared by ``doctor`` and ``_preflight``.
+
+    Does not call ``Engine.check_image``: that OpenHands override can
+    ``docker run`` for 120s. Image presence is ``docker image inspect``;
+    engine-specific runtime probes stay on the engine class.
+    """
     import shutil
 
     from readme2demo import llm
@@ -601,7 +651,7 @@ def _preflight(cfg: Config) -> None:
     from readme2demo.engines.base import EngineError
     from readme2demo.llm import LLMError
 
-    problems: list[str] = []
+    checks: list[Check] = []
 
     # LLM backend for the planner/distiller/tutorial passes. check_sdk and
     # check_model make a missing/broken optional SDK or an unresolvable model
@@ -613,17 +663,21 @@ def _preflight(cfg: Config) -> None:
         backend = llm.resolve_backend()
         llm.check_sdk(backend)
         llm.check_model(backend, cfg.model)
-        console.print(f"[dim]LLM backend: {backend}[/]")
-        if backend == "claude-cli":
-            console.print(
-                "[dim]claude-cli backend: running on your Claude Code "
-                "subscription — supported for self-hosted runs (slower, and "
-                "subject to your plan's usage caps). For a hosted/multi-tenant "
-                "service use --llm-backend api; per Anthropic's terms, "
-                "subscription auth may not power a product for other users.[/]"
-            )
+        checks.append(
+            Check(f"LLM backend ({backend})", True, f"model {cfg.model}")
+        )
+        if verbose:
+            console.print(f"[dim]LLM backend: {backend}[/]")
+            if backend == "claude-cli":
+                console.print(
+                    "[dim]claude-cli backend: running on your Claude Code "
+                    "subscription — supported for self-hosted runs (slower, and "
+                    "subject to your plan's usage caps). For a hosted/multi-tenant "
+                    "service use --llm-backend api; per Anthropic's terms, "
+                    "subscription auth may not power a product for other users.[/]"
+                )
     except LLMError as e:
-        problems.append(str(e))
+        checks.append(Check("LLM backend", False, str(e)))
 
     # Agent engine auth (forwarded into the sandbox), sandbox image probe, and
     # the Docker CLI are only exercised once the agent stage runs. A --dry-run
@@ -631,26 +685,122 @@ def _preflight(cfg: Config) -> None:
     # Docker), so requiring them there would defeat the feature — its whole
     # point is a cheap feasibility check before you commit a credential and a
     # Docker environment. A real run still preflights all three.
-    if not cfg.dry_run:
-        try:
-            engine = get_engine(cfg.engine)
-            engine.resolve_env()
-            engine.check_image(cfg.base_image)
-        except EngineError as e:
-            problems.append(str(e))
+    if cfg.dry_run:
+        return checks
 
-        if shutil.which("docker") is None:
-            problems.append(
-                "docker CLI not found on PATH — install Docker Desktop and retry."
+    docker_ok = shutil.which("docker") is not None
+    if docker_ok:
+        checks.append(Check("Docker CLI", True, "found on PATH"))
+        daemon_detail = _docker_daemon_detail()
+        if daemon_detail is None:
+            checks.append(Check("Docker daemon", True, "reachable"))
+        else:
+            checks.append(
+                Check(
+                    "Docker daemon",
+                    False,
+                    f"Docker is not usable — {daemon_detail}. "
+                    "Start Docker Desktop (or dockerd) and retry.",
+                )
+            )
+    else:
+        checks.append(
+            Check(
+                "Docker CLI",
+                False,
+                "docker CLI not found on PATH — install Docker Desktop and retry.",
+            )
+        )
+
+    engine = None
+    try:
+        engine = get_engine(cfg.engine)
+    except EngineError as e:
+        checks.append(Check("Engine", False, str(e)))
+
+    if engine is not None:
+        try:
+            engine.resolve_env()
+            checks.append(
+                Check("Engine credential", True, f"engine {cfg.engine}")
+            )
+        except EngineError as e:
+            checks.append(Check("Engine credential", False, str(e)))
+
+    # Image inspect is gated on a healthy Docker CLI. Daemon-down is owned
+    # by the daemon row; inspect_local_image is silent on daemon errors.
+    if docker_ok:
+        image_detail = _docker_image_detail(cfg.base_image)
+        if image_detail is None:
+            checks.append(
+                Check(f"Base image ({cfg.base_image})", True, "available")
+            )
+        else:
+            checks.append(
+                Check(f"Base image ({cfg.base_image})", False, image_detail)
             )
 
+    return checks
+
+
+def _preflight(cfg: Config) -> None:
+    """Fail fast, before creating a run dir, if the environment can't work."""
+    checks = _collect_preflight_checks(cfg, verbose=True)
+    problems = [c for c in checks if not c.ok]
     if problems:
-        for p in problems:
+        for c in problems:
             # escape(): problem text may contain [bracketed] content (e.g.
             # "pip install 'readme2demo[openai]'") that Rich would otherwise
             # parse as markup and silently swallow.
-            console.print(f"[red]✗[/] {escape(p)}")
+            console.print(f"[red]✗[/] {escape(c.detail)}")
         raise typer.Exit(2)
+
+
+@app.command()
+def doctor(
+    engine: Optional[str] = typer.Option(
+        None, help="Agent engine: claude-code | openhands"
+    ),
+    llm_backend: Optional[str] = typer.Option(
+        None,
+        "--llm-backend",
+        help="LLM backend: auto | api | claude-cli | gemini | openai",
+    ),
+    base_image: Optional[str] = typer.Option(
+        None, help="Sandbox base image"
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Skip Docker/engine checks (same gates as a --dry-run run)",
+    ),
+    config_file: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+        help="Path to readme2demo.toml",
+    ),
+) -> None:
+    """Check local setup: Docker, LLM backend, engine credential, base image.
+
+    Prints a checklist and exits 1 if any check fails. Useful before your
+    first real run — failures here would otherwise surface mid-pipeline.
+    """
+    cfg = _load_config(
+        config_file, engine=engine, llm_backend=llm_backend, base_image=base_image
+    )
+    if dry_run:
+        cfg = cfg.model_copy(update={"dry_run": True})
+    cfg = _apply_engine_image(cfg)
+    checks = _collect_preflight_checks(cfg, verbose=False)
+    for row in checks:
+        mark = "[green]✓[/]" if row.ok else "[red]✗[/]"
+        console.print(f"{mark} {escape(row.name)}: {escape(row.detail)}")
+    if any(not c.ok for c in checks):
+        raise typer.Exit(1)
+    console.print("\n[green]Doctor: all checks passed.[/]")
 
 
 def _drive(orch: Orchestrator) -> None:
