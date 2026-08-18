@@ -264,6 +264,13 @@ class OpenHandsEngine(AgentEngine):
     def required_env(self) -> list[str]:
         return ["LLM_API_KEY", "LLM_MODEL"]
 
+    def credential_env_vars(self) -> set[str]:
+        # DEFENSIVE override: the fail-closed default already yields exactly
+        # {"LLM_API_KEY"} today (LLM_MODEL matches nothing). This pins the
+        # intent — LLM_MODEL is config, never a credential — and guards a
+        # future rename of the key var that the name-regex might not catch.
+        return {"LLM_API_KEY"}
+
     def resolve_env(self) -> dict[str, str]:
         """Collect litellm-style credentials, with preset guidance on failure.
 

@@ -8,6 +8,7 @@ downstream consumes the normalized CommandLog and never knows which agent ran.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +66,15 @@ def is_placeholder_credential(value: str) -> bool:
     return False
 
 
+# Matches env var NAMES that look like credentials. Deliberately an
+# unanchored, case-insensitive substring match: over-inclusive in the safe
+# direction (fail-closed) — a name like MONKEY_CONFIG also matches KEY, and
+# treating a plain config var as a credential is harmless, while missing a
+# real credential is not. Distinct from the _CREDENTIAL_RE in claude_code.py
+# / llm.py, which matches a credential VALUE's shape, not its name.
+_CREDENTIAL_NAME_RE = re.compile(r"KEY|TOKEN|SECRET", re.I)
+
+
 @dataclass
 class Limits:
     max_turns: int = 60
@@ -105,6 +115,20 @@ class AgentEngine(ABC):
         They are forwarded into the sandbox at exec time (never baked into the
         image or written to disk).
         """
+
+    def credential_env_vars(self) -> set[str]:
+        """Env var NAMES this engine treats as the model credential.
+
+        Transport-agnostic seam: consumers (e.g. an egress proxy that swaps
+        the real credential for a placeholder before forwarding) use this to
+        know which forwarded vars hold the secret. Default is fail-closed:
+        every name in :meth:`required_env` matching KEY|TOKEN|SECRET
+        (case-insensitive) counts, so an engine that forgets to override
+        still has its secret-named vars treated as credentials. Engines whose
+        credential lives outside ``required_env`` (alternative auth methods)
+        MUST override.
+        """
+        return {k for k in self.required_env() if _CREDENTIAL_NAME_RE.search(k)}
 
     def resolve_env(self) -> dict[str, str]:
         """Collect the env vars to forward into the sandbox.
