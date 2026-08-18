@@ -25,6 +25,23 @@ _URL = "https://github.com/owner/repo"
 
 runner = CliRunner()
 
+
+def _stub_docker_daemon_probe(monkeypatch) -> None:
+    """Keep a preflight test off the real ``docker info``.
+
+    ``_preflight`` probes the daemon for every non-dry-run config, so a test
+    that reaches that branch execs the docker CLI for real. A wedged (rather
+    than absent) daemon answers nothing, so each such test burns the probe's
+    full 5s bound: test_cli.py went 0.29s -> 20.35s across four tests that care
+    nothing about Docker. Same leak, same fix #155 applied to sandbox.py's
+    ``docker run`` probe. ``_preflight`` looks the probe up as a module global
+    at call time, so patch it on the cli module.
+    """
+    from readme2demo import cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+
+
 def test_positional_repo_only() -> None:
     assert _resolve_repo(_URL, None, None) == _URL
 
@@ -380,7 +397,7 @@ def test_regression_missing_openai_sdk_fails_preflight(monkeypatch, capsys):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     monkeypatch.setitem(sys.modules, "openai", None)  # import -> ImportError
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+    _stub_docker_daemon_probe(monkeypatch)
     try:
         with pytest.raises(typer.Exit):
             cli_mod._preflight(Config(llm_backend="openai"))
@@ -459,6 +476,60 @@ def test_regression_docker_daemon_down_fails_preflight(monkeypatch, capsys) -> N
     assert captured.get("timeout") == 5
 
 
+def test_regression_docker_probe_timeout_is_reported_not_raised(monkeypatch, capsys) -> None:
+    """Regression (#14): hitting the probe's 5s bound must fail preflight
+    cleanly, not blow up.
+
+    The sibling test above pins that ``timeout=5`` is PASSED; nothing pinned
+    what happens when it EXPIRES. A *wedged* daemon — half-up Docker Desktop
+    accepts ``docker info`` and never answers, the same state that made four
+    unit tests here take 5s each — raises ``TimeoutExpired``, not a non-zero
+    exit. Delete ``_docker_daemon_detail``'s TimeoutExpired handler and the
+    whole suite still passes while preflight dies on an unhandled traceback:
+    exactly the confusing failure #14 exists to replace. A bound is only a fix
+    if the operator gets the actionable message when it fires.
+    """
+    import subprocess as _sp
+
+    from readme2demo import cli as cli_mod
+    from readme2demo import llm
+    from readme2demo.config import Config
+
+    class _FakeEngine:
+        def resolve_env(self) -> None:
+            return None
+
+        def check_image(self, image: str) -> None:
+            return None
+
+    monkeypatch.setattr(llm, "check_sdk", lambda b: None)
+    monkeypatch.setattr(llm, "check_model", lambda b, m: None)
+    monkeypatch.setattr("readme2demo.engines.get_engine", lambda name: _FakeEngine())
+    import shutil as _shutil
+
+    monkeypatch.setattr(
+        _shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else "/usr/bin/claude"
+    )
+
+    bound: dict[str, object] = {}
+
+    def _wedged_run(*a: object, **kw: object) -> object:
+        # KeyError, not a silent pass, if the call ever stops bounding itself:
+        # an unbounded probe against a wedged daemon hangs the CLI forever.
+        bound.update(kw)
+        raise _sp.TimeoutExpired(cmd=["docker", "info"], timeout=kw["timeout"])
+
+    monkeypatch.setattr(_sp, "run", _wedged_run)
+    with pytest.raises(typer.Exit) as exc:
+        cli_mod._preflight(Config(dry_run=False))
+    assert exc.value.exit_code == 2
+    out = capsys.readouterr().out
+    assert "Docker is not usable" in out
+    assert "timed out" in out
+    assert "Start Docker Desktop" in out
+    assert bound["timeout"] == 5
+
+
 def test_regression_docker_daemon_down_not_checked_in_dry_run(monkeypatch, capsys) -> None:
     """Regression (#14): daemon probe must not run under dry_run=True."""
     from readme2demo import cli as cli_mod
@@ -486,7 +557,7 @@ def test_non_dry_run_still_requires_engine_credential(monkeypatch, capsys):
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     monkeypatch.setattr("readme2demo.llm.shutil.which", lambda _: "/usr/bin/claude")
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+    _stub_docker_daemon_probe(monkeypatch)
     try:
         with pytest.raises(typer.Exit):
             cli_mod._preflight(Config(dry_run=False))
@@ -505,7 +576,7 @@ def test_preflight_rejects_unknown_backend_cleanly(monkeypatch, capsys):
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+    _stub_docker_daemon_probe(monkeypatch)
     with pytest.raises(typer.Exit):
         cli_mod._preflight(Config(llm_backend="gpt"))
     assert "Unknown LLM backend" in capsys.readouterr().out
@@ -532,7 +603,7 @@ def test_bare_llm_backend_gemini_without_model_fails_preflight(monkeypatch, caps
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-abcdefghijklmnop")
     monkeypatch.setattr(shutil_mod, "which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr(cli_mod, "_docker_daemon_detail", lambda: None)
+    _stub_docker_daemon_probe(monkeypatch)
     try:
         with pytest.raises(typer.Exit):
             cli_mod._preflight(Config(llm_backend="gemini"))
