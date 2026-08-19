@@ -5,6 +5,7 @@ helper that reconciles the positional repo, ``-gr/--github-repo``, and the
 ``-s/--step-by-step`` guide.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -485,7 +486,6 @@ def test_regression_report_keeps_bracketed_error_text(tmp_path):
     `pip install 'readme2demo'` because Rich swallowed the [openai] tag from
     the stage error. summarize output must be escaped before console.print.
     """
-    import json
 
     manifest_data = {
         "run_id": "glow-20260710-162012-33fc72",
@@ -509,7 +509,6 @@ def test_regression_report_json_with_recorded_stages(tmp_path):
     total_cost_usd / commit_sha values. (The old test used empty stages, so
     CI stayed green through the breakage.)
     """
-    import json
 
     manifest_data = {
         "run_id": "test-run-123",
@@ -535,6 +534,75 @@ def test_regression_report_json_with_recorded_stages(tmp_path):
     assert {"name": "agent", "status": "failed", "duration_seconds": None} in parsed["stages"]
 
 
+def test_report_json_includes_derived_list(tmp_path):
+    """The JSON report must surface derived records next to verified."""
+
+    from readme2demo.manifest import Manifest
+
+    manifest = Manifest.create(tmp_path, repo_url="https://github.com/owner/repo")
+    manifest.record_derived(
+        path="architecture.svg",
+        stage="ingest",
+        tool="codeflow",
+        tool_version="v1.2.3",
+        source_commit_sha="abcdef1234567890",
+    )
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--json"])
+
+    assert result.exit_code == 1  # unverified; derived records do not change it
+    parsed = json.loads(result.output)
+    assert parsed["verified"] is False
+    assert len(parsed["derived"]) == 1
+    assert parsed["derived"][0]["path"] == "architecture.svg"
+    assert parsed["derived"][0]["stage"] == "ingest"
+    assert parsed["derived"][0]["source_commit_sha"] == "abcdef1234567890"
+
+
+def test_report_exit_code_ignores_derived_records(tmp_path):
+    """Derived artifacts must never move the verified/unverified CI gate."""
+    from readme2demo.manifest import Manifest
+
+    manifest = Manifest.create(tmp_path)
+    manifest.record_derived(
+        path="architecture.svg",
+        stage="ingest",
+        tool="codeflow",
+        tool_version="v1",
+        source_commit_sha="a" * 40,
+    )
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--json"])
+    assert result.exit_code == 1
+
+    manifest.verified = True
+    manifest.stages["verify"].finished_at = "2026-08-06T12:00:00+00:00"
+    manifest.save()
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--json"])
+    assert result.exit_code == 0
+
+
+def test_report_markdown_includes_derived_section(tmp_path):
+    """The Markdown report must keep derived artifacts under their own heading."""
+    from readme2demo.manifest import Manifest
+
+    manifest = Manifest.create(tmp_path, repo_url="https://github.com/owner/repo")
+    manifest.record_derived(
+        path="architecture.svg",
+        stage="ingest",
+        tool="codeflow",
+        tool_version="v1.2.3",
+        source_commit_sha="abcdef1234567890",
+    )
+
+    result = runner.invoke(app, ["report", str(tmp_path), "--markdown"])
+
+    assert result.exit_code == 1
+    assert "## Derived (parsed from source — not executed)" in result.output
+    assert "parsed, not executed." in result.output
+
+
 # -- report exit codes (#85) --------------------------------------------------
 # Regression: `report` exited 0 unconditionally — the JSON branch via
 # `raise typer.Exit(0)`, the human branch by falling off the end — so a CI
@@ -544,7 +612,6 @@ def test_regression_report_json_with_recorded_stages(tmp_path):
 
 def _write_manifest(tmp_path, **overrides):
     """Write a minimal manifest.json into ``tmp_path`` and return the dir."""
-    import json
 
     data = {"run_id": "exitcode-test-run", **overrides}
     (tmp_path / "manifest.json").write_text(json.dumps(data))
@@ -617,7 +684,6 @@ def test_report_json_still_prints_full_payload_on_nonzero_exit(tmp_path):
         total_cost_usd=0.5,
         stages={"agent": {"status": "failed"}},
     )
-    import json
 
     result = runner.invoke(app, ["report", str(tmp_path), "--json"])
     assert result.exit_code == 2
@@ -631,7 +697,6 @@ def test_report_json_still_prints_full_payload_on_nonzero_exit(tmp_path):
 
 
 def test_report_markdown_emits_gfm_summary_with_present_artifacts(tmp_path):
-    import json
 
     manifest_data = {
         "run_id": "glow-20260710-162012-33fc72",
@@ -667,7 +732,6 @@ def test_report_markdown_emits_gfm_summary_with_present_artifacts(tmp_path):
 
 
 def test_report_markdown_table_survives_hostile_error_text(tmp_path):
-    import json
 
     manifest_data = {
         "run_id": "hostile-run",
@@ -692,7 +756,6 @@ def test_report_markdown_table_survives_hostile_error_text(tmp_path):
 
 
 def test_report_markdown_unverified_exit_1(tmp_path):
-    import json
 
     manifest_data = {
         "run_id": "unverified-run",
@@ -706,7 +769,6 @@ def test_report_markdown_unverified_exit_1(tmp_path):
 
 
 def test_report_json_and_markdown_are_mutually_exclusive(tmp_path):
-    import json
 
     (tmp_path / "manifest.json").write_text(json.dumps({"run_id": "x"}))
     result = runner.invoke(

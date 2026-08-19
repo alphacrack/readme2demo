@@ -582,6 +582,7 @@ def report(
                 for name, rec in manifest.stages.items()
             ],
             "verified": manifest.verified,
+            "derived": [artifact.model_dump() for artifact in manifest.derived],
             "cost": manifest.total_cost_usd,
             "commit": manifest.commit_sha,
         }
