@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -295,3 +296,64 @@ class TestFormats:
         """Regression: unpassed --formats (None) must keep toml formats."""
         toml = _write_toml(tmp_path / "r2d.toml", 'formats = ["demo"]\n')
         assert Config.load(toml, formats=None).formats == ["demo"]
+
+
+# --- the documented example must load (#274) ----------------------------------
+
+_DOCS_CONFIG = Path(__file__).resolve().parent.parent / "docs" / "configuration.md"
+_TOML_FENCE_RE = re.compile(r"^```toml\n(?P<body>.*?)^```", re.DOTALL | re.MULTILINE)
+
+
+def _first_toml_fence(doc: Path) -> str:
+    """Return the body of the first ```toml fence in a markdown file."""
+    match = _TOML_FENCE_RE.search(doc.read_text(encoding="utf-8"))
+    assert match is not None, f"no ```toml fence found in {doc}"
+    return match.group("body")
+
+
+def _assigned_keys(toml_body: str) -> set[str]:
+    """Keys the TOML body actually assigns (commented lines don't count)."""
+    return {
+        line.split("=", 1)[0].strip()
+        for line in toml_body.splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+
+
+class TestDocumentedExample:
+    def test_docs_configuration_toml_fence_loads_verbatim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression (#274): the example in docs/configuration.md did not load.
+
+        It shipped ``brand_logo = "assets/logo.png"`` uncommented, so pasting the fence into
+        readme2demo.toml — which is exactly what the surrounding prose tells you to do — died in
+        ``Config._validate_brand_logo`` with "brand_logo file not found" before any run started.
+
+        The fence is loaded from an arbitrary cwd on purpose: it is meant to be copied into the
+        reader's own project, so it may not lean on a file that merely happens to exist in this
+        repo. Any key the loader validates as a path therefore stays commented out in the runnable
+        example and is documented in the annotated table instead.
+        """
+        body = _first_toml_fence(_DOCS_CONFIG)
+        keys = _assigned_keys(body)
+        assert len(keys) >= 10, (
+            f"the first ```toml fence no longer looks like the full example (keys: {sorted(keys)})"
+        )
+
+        monkeypatch.chdir(tmp_path)  # nothing from this repo is reachable relatively
+        cfg = Config.load(_write_toml(tmp_path / "readme2demo.toml", body))
+        assert cfg.brand_logo is None  # the example never names a file it cannot guarantee
+
+    def test_pre_fix_docs_example_would_fail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The guard above is not vacuous: re-adding the pre-fix line still breaks the load."""
+        body = _first_toml_fence(_DOCS_CONFIG)
+        assert "brand_logo" not in _assigned_keys(body), (
+            "the example assigns brand_logo again — it must stay commented out"
+        )
+        body += '\nbrand_logo = "assets/logo.png"\n'
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(ValidationError, match="brand_logo file not found"):
+            Config.load(_write_toml(tmp_path / "readme2demo.toml", body))
