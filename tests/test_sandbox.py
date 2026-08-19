@@ -9,13 +9,14 @@ network.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
 import pytest
 
 import readme2demo.sandbox as sandbox_mod
-from readme2demo.sandbox import Sandbox, SandboxError, docker_socket_gid
+from readme2demo.sandbox import DOCKER_NOT_FOUND_MSG, Sandbox, SandboxError, docker_socket_gid
 
 IMAGE = "readme2demo/base:latest"
 
@@ -184,7 +185,7 @@ class TestStartFailure:
 
     def test_docker_cli_missing_raises_actionable_error(self, docker: _FakeDocker) -> None:
         docker.queue(FileNotFoundError("docker"))
-        with pytest.raises(SandboxError, match="docker CLI not found"):
+        with pytest.raises(SandboxError, match=re.escape(DOCKER_NOT_FOUND_MSG)):
             Sandbox(image=IMAGE, name="r2d-test").start()
 
 

@@ -55,3 +55,36 @@ def test_vhs_image_is_excluded_from_serialized_config():
     with pytest.warns(DeprecationWarning, match="vhs_image.*deprecated"):
         cfg = Config(vhs_image="old/image:tag")
     assert "vhs_image" not in cfg.model_dump()
+
+
+def test_check_render_image_file_not_found_uses_shared_msg(monkeypatch):
+    """Regression (#41): probe FileNotFoundError is DOCKER_NOT_FOUND_MSG."""
+    import re
+
+    from readme2demo.sandbox import DOCKER_NOT_FOUND_MSG
+
+    def _raise(*a, **k):
+        raise FileNotFoundError("docker")
+
+    monkeypatch.setattr(render.subprocess, "run", _raise)
+    with pytest.raises(render.RenderError, match=re.escape(DOCKER_NOT_FOUND_MSG)):
+        render.check_render_image("readme2demo/base:latest")
+
+
+def test_run_render_file_not_found_uses_shared_msg(tmp_path):
+    """Regression (#41): VHS FileNotFoundError is DOCKER_NOT_FOUND_MSG."""
+    import re
+
+    from readme2demo.sandbox import DOCKER_NOT_FOUND_MSG
+
+    tape = tmp_path / "demo.tape"
+    tape.write_text("Output demo.mp4\nType echo hello\n")
+    with patch.object(render, "check_render_image"):
+        with patch(
+            "readme2demo.render.subprocess.run",
+            side_effect=FileNotFoundError("docker"),
+        ):
+            with pytest.raises(
+                render.RenderError, match=re.escape(DOCKER_NOT_FOUND_MSG)
+            ):
+                render.run_render(tmp_path, Config())

@@ -28,6 +28,7 @@ from rich.markup import escape
 from readme2demo.config import Config
 from readme2demo.formats import FormatError, parse_formats
 from readme2demo.manifest import STAGES, Manifest, stage_duration
+from readme2demo.sandbox import DOCKER_NOT_FOUND_MSG
 from readme2demo.orchestrator import (
     Orchestrator,
     PipelineError,
@@ -641,7 +642,7 @@ def _preflight(cfg: Config) -> None:
 
         if shutil.which("docker") is None:
             problems.append(
-                "docker CLI not found on PATH — install Docker Desktop and retry."
+                DOCKER_NOT_FOUND_MSG
             )
 
     if problems:

@@ -19,6 +19,14 @@ class SandboxError(RuntimeError):
     pass
 
 
+DOCKER_NOT_FOUND_MSG = "docker CLI not found — install Docker and ensure it is on PATH"
+
+_START_TIMEOUT_S = 120
+_CP_TIMEOUT_S = 300
+_DESTROY_TIMEOUT_S = 60
+_SOCKET_GID_TIMEOUT_S = 60
+
+
 @dataclass
 class ExecResult:
     exit_code: int
@@ -46,7 +54,7 @@ def docker_socket_gid(image: str) -> str:
                 "--entrypoint", "stat",
                 image, "-c", "%g", "/var/run/docker.sock",
             ],
-            capture_output=True, text=True, timeout=60, errors="replace",
+            capture_output=True, text=True, timeout=_SOCKET_GID_TIMEOUT_S, errors="replace",
         )
         gid = proc.stdout.strip()
         if proc.returncode == 0 and gid.isdigit():
@@ -102,9 +110,7 @@ class Sandbox:
                 partial = e.stdout if isinstance(e.stdout, str) else e.stdout.decode(errors="replace")
             return ExecResult(124, partial + "\n[readme2demo] TIMEOUT")
         except FileNotFoundError as e:  # docker not installed
-            raise SandboxError(
-                "docker CLI not found — install Docker and ensure it is on PATH"
-            ) from e
+            raise SandboxError(DOCKER_NOT_FOUND_MSG) from e
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -131,7 +137,7 @@ class Sandbox:
             # docker -v treats relative paths as volume names; force absolute.
             cmd += ["-v", f"{Path(src).resolve()}:{dst}:{mode}"]
         cmd += [self.image, "sleep", "infinity"]
-        res = self._run(cmd, timeout=120)
+        res = self._run(cmd, timeout=_START_TIMEOUT_S)
         if not res.ok:
             raise SandboxError(f"docker run failed ({res.exit_code}): {res.output.strip()}")
         self._started = True
@@ -157,19 +163,19 @@ class Sandbox:
         return self._run(cmd, timeout=timeout, stream_to=stream_to)
 
     def copy_in(self, src: Path, dst: str) -> None:
-        res = self._run(["docker", "cp", str(src), f"{self.name}:{dst}"], timeout=300)
+        res = self._run(["docker", "cp", str(src), f"{self.name}:{dst}"], timeout=_CP_TIMEOUT_S)
         if not res.ok:
             raise SandboxError(f"docker cp in failed: {res.output.strip()}")
 
     def copy_out(self, src: str, dst: Path) -> None:
         dst.parent.mkdir(parents=True, exist_ok=True)
-        res = self._run(["docker", "cp", f"{self.name}:{src}", str(dst)], timeout=300)
+        res = self._run(["docker", "cp", f"{self.name}:{src}", str(dst)], timeout=_CP_TIMEOUT_S)
         if not res.ok:
             raise SandboxError(f"docker cp out failed: {res.output.strip()}")
 
     def destroy(self) -> None:
         if self._started:
-            self._run(["docker", "rm", "-f", self.name], timeout=60)
+            self._run(["docker", "rm", "-f", self.name], timeout=_DESTROY_TIMEOUT_S)
             self._started = False
 
     # -- context manager -----------------------------------------------------
