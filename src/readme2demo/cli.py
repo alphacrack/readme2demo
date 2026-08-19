@@ -592,6 +592,31 @@ def report(
     raise typer.Exit(_report_exit_code(manifest))
 
 
+
+def _docker_daemon_detail() -> str | None:
+    """Probe ``docker info``; return daemon detail string or None if healthy."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=5,
+        )
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            return tail[-1].strip() if tail else "docker info failed"
+        return None
+    except FileNotFoundError:
+        return None  # docker CLI missing already reported
+    except OSError as e:
+        return str(e).strip().splitlines()[-1].strip() if str(e).strip() else "unknown error"
+    except subprocess.TimeoutExpired:
+        return "docker info timed out"
+
+
 def _preflight(cfg: Config) -> None:
     """Fail fast, before creating a run dir, if the environment can't work."""
     import shutil
@@ -643,6 +668,10 @@ def _preflight(cfg: Config) -> None:
             problems.append(
                 "docker CLI not found on PATH — install Docker Desktop and retry."
             )
+        else:
+            detail = _docker_daemon_detail()
+            if detail is not None:
+                problems.append(f"Docker is not usable — {detail}. Start Docker Desktop (or dockerd) and retry.")
 
     if problems:
         for p in problems:
