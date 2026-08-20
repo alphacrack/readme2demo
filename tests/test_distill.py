@@ -1119,9 +1119,10 @@ EOF
 )"
 echo after
 ```
-"""
+    """
     assert parse_guide_steps(guide) == [
-        ("Nested heredoc", 'v="$(cat <<\'EOF\'\nbody\nEOF\n)"'),
+        ("Nested heredoc", 'v="$(cat <<\'EOF\'\nbody\nEOF'),
+        ("Nested heredoc", ')"'),
         ("Nested heredoc", "echo after"),
     ]
 
