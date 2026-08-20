@@ -19,8 +19,9 @@ Trajectory shapes this parser understands:
 
 * Actions: ``{"action": "run", "args": {"command": ...}}`` — a shell command.
 * Observations: ``{"observation": "run", "content": ...,
-  "extras": {"exit_code": int}}`` — the paired output. Actions and
-  observations are paired in file order.
+  "extras": {"metadata": {"exit_code": int}}}`` — the paired output.
+  The older ``extras.exit_code`` location is accepted as a fallback. Actions
+  and observations are paired in file order.
 * Message actions: ``{"action": "message", "args": {"content": ...}}`` (or a
   top-level ``"content"``/``"message"`` field) — scanned for FIX/BLOCKED/
   SUCCESS markers.
@@ -111,6 +112,23 @@ def _load_events(raw: str) -> list[dict[str, Any]]:
         if isinstance(event, dict):
             events.append(event)
     return events
+
+
+def _exit_code(extras: Any) -> Optional[int]:
+    """Extract an OpenHands run exit code without treating unknown as success."""
+    if not isinstance(extras, dict):
+        return None
+
+    metadata = extras.get("metadata")
+    if isinstance(metadata, dict):
+        exit_code = metadata.get("exit_code")
+        if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+            return exit_code
+
+    exit_code = extras.get("exit_code")
+    if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+        return exit_code
+    return None
 
 
 def _message_text(event: dict[str, Any]) -> str:
@@ -447,9 +465,7 @@ class OpenHandsEngine(AgentEngine):
                 entry.output = truncate_output(
                     content if isinstance(content, str) else ""
                 )
-                extras = event.get("extras")
-                exit_code = extras.get("exit_code") if isinstance(extras, dict) else None
-                entry.exit_code = exit_code if isinstance(exit_code, int) else 0
+                entry.exit_code = _exit_code(event.get("extras"))
 
         outcome: Outcome
         if blocked_reason is not None:
