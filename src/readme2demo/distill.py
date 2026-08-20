@@ -58,6 +58,37 @@ _CHAIN_SPLIT_RE = re.compile(r"\s*(?:&&|;)\s*")
 _HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?")
 
 
+def _heredoc_match(cmd: str) -> Optional[re.Match[str]]:
+    """Find a heredoc operator only when it is outside shell quotes."""
+    quote: Optional[str] = None
+    i = 0
+    while i < len(cmd):
+        char = cmd[i]
+        if quote is not None:
+            if char == "\\" and quote == '"':
+                i += 2
+                continue
+            if char == quote:
+                quote = None
+            i += 1
+            continue
+        if char == "\\":
+            i += 2
+            continue
+        if char in ("'", '"'):
+            quote = char
+            i += 1
+            continue
+        if char == "#" and (i == 0 or cmd[i - 1].isspace()):
+            return None
+        if cmd.startswith("<<", i):
+            match = _HEREDOC_RE.match(cmd, i)
+            if match:
+                return match
+        i += 1
+    return None
+
+
 def heredoc_prefix(cmd: str) -> Optional[str]:
     """The command text up to (excluding) a heredoc operator, or None.
 
@@ -67,7 +98,7 @@ def heredoc_prefix(cmd: str) -> Optional[str]:
     the verify replay still gates the actual content (wrong file body →
     demo assertion fails → distiller feedback loop).
     """
-    m = _HEREDOC_RE.search(cmd)
+    m = _heredoc_match(cmd)
     if not m:
         return None
     return " ".join(cmd[: m.start()].split()).strip()
@@ -715,7 +746,7 @@ def parse_guide_steps(guide_text: str) -> list[tuple[str, str]]:
                 cmd = stripped.removeprefix("$ ").strip()
                 if not cmd:
                     continue
-                m = _HEREDOC_RE.search(cmd)
+                m = _heredoc_match(cmd)
                 if m:
                     heredoc_term = m.group(1)
                     heredoc_lines = [cmd]
