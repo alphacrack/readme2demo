@@ -1106,6 +1106,26 @@ def test_parse_guide_steps_does_not_accumulate_quoted_shift_text():
     ]
 
 
+def test_parse_guide_steps_preserves_nested_substitution_heredoc():
+    """Regression (#107): heredocs inside quoted command substitutions accumulate."""
+    from readme2demo.distill import parse_guide_steps
+
+    guide = """### Step 1 — Nested heredoc
+
+```bash
+v="$(cat <<'EOF'
+body
+EOF
+)"
+echo after
+```
+"""
+    assert parse_guide_steps(guide) == [
+        ("Nested heredoc", 'v="$(cat <<\'EOF\'\nbody\nEOF\n)"'),
+        ("Nested heredoc", "echo after"),
+    ]
+
+
 @pytest.mark.parametrize("operator", ["<<'EOF'", '<<"EOF"', "<<-EOF"])
 def test_parse_guide_steps_accumulates_real_heredoc_delimiters(operator: str):
     """Regression (#107): supported shell heredoc delimiters still accumulate."""
