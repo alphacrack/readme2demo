@@ -1086,6 +1086,123 @@ def test_parse_guide_steps_accumulates_heredoc():
     assert cmds[2] == "tfdrift scan"
 
 
+def test_parse_guide_steps_does_not_accumulate_quoted_shift_text():
+    """Regression (#107): quoted ``<<`` text is not a heredoc opener."""
+    from readme2demo.distill import parse_guide_steps
+
+    guide = (
+        "### Step 1 — Explain literal operators\n\n```bash\n"
+        'echo "use a << b operator"\n'
+        "printf '%s\\n' 'use a << END operator'\n"
+        "```\n"
+        "### Step 2 — Continue\n\n```bash\n"
+        "echo after\n"
+        "```\n"
+    )
+    assert parse_guide_steps(guide) == [
+        ("Explain literal operators", 'echo "use a << b operator"'),
+        ("Explain literal operators", "printf '%s\\n' 'use a << END operator'"),
+        ("Continue", "echo after"),
+    ]
+
+
+def test_parse_guide_steps_preserves_nested_substitution_heredoc():
+    """Regression (#107): heredocs inside quoted command substitutions accumulate."""
+    from readme2demo.distill import parse_guide_steps
+
+    guide = """### Step 1 — Nested heredoc
+
+```bash
+v="$(cat <<'EOF'
+body
+EOF
+)"
+echo after
+```
+    """
+    assert parse_guide_steps(guide) == [
+        ("Nested heredoc", 'v="$(cat <<\'EOF\'\nbody\nEOF'),
+        ("Nested heredoc", ')"'),
+        ("Nested heredoc", "echo after"),
+    ]
+
+
+def test_parse_guide_steps_preserves_heredoc_after_nested_arithmetic_expansion():
+    """A completed arithmetic expansion must not close its enclosing ``$()``."""
+    from readme2demo.distill import parse_guide_steps
+
+    guide = (
+        "### Step 1 — Arithmetic before heredoc\n\n```bash\n"
+        'v="$(echo $((1 + 2)); cat <<\'EOF\'\n'
+        "body\n"
+        "EOF\n"
+        ')"\n'
+        "echo after\n"
+        "```\n"
+    )
+    assert parse_guide_steps(guide) == [
+        (
+            "Arithmetic before heredoc",
+            'v="$(echo $((1 + 2)); cat <<\'EOF\'\nbody\nEOF',
+        ),
+        ("Arithmetic before heredoc", ')"'),
+        ("Arithmetic before heredoc", "echo after"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("opener", "closer"),
+    [
+        ('v="$(cat <<\'EOF\'', ')"'),
+        ('v="' + chr(96) + "cat <<'EOF'", chr(96) + '"'),
+    ],
+)
+def test_parse_guide_steps_preserves_heredocs_in_quoted_substitutions(
+    opener: str, closer: str
+):
+    """Regression (#107): quote-context transitions do not hide real heredocs."""
+    from readme2demo.distill import parse_guide_steps
+
+    guide = (
+        "### Step 1 — Nested heredoc\n\n"
+        f"{chr(96) * 3}bash\n"
+        f"{opener}\n"
+        "body\n"
+        "EOF\n"
+        f"{closer}\n"
+        "echo after\n"
+        f"{chr(96) * 3}\n"
+    )
+    assert parse_guide_steps(guide) == [
+        ("Nested heredoc", f"{opener}\nbody\nEOF"),
+        ("Nested heredoc", closer),
+        ("Nested heredoc", "echo after"),
+    ]
+
+
+@pytest.mark.parametrize("operator", ["<<'EOF'", '<<"EOF"', "<<-EOF"])
+def test_parse_guide_steps_accumulates_real_heredoc_delimiters(operator: str):
+    """Regression (#107): supported shell heredoc delimiters still accumulate."""
+    from readme2demo.distill import parse_guide_steps
+
+    guide = (
+        "### Step 1 — Write a file\n\n```bash\n"
+        f"cat > /tmp/demo.txt {operator}\n"
+        "body << stays in the heredoc\n"
+        "EOF\n"
+        "echo after\n"
+        "```\n"
+    )
+    steps = parse_guide_steps(guide)
+    assert steps == [
+        (
+            "Write a file",
+            f"cat > /tmp/demo.txt {operator}\nbody << stays in the heredoc\nEOF",
+        ),
+        ("Write a file", "echo after"),
+    ]
+
+
 def test_tape_skips_multiline_heredoc_but_keeps_rest():
     from readme2demo.distill import tape_from_guide
 

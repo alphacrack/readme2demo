@@ -58,6 +58,100 @@ _CHAIN_SPLIT_RE = re.compile(r"\s*(?:&&|;)\s*")
 _HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?")
 
 
+def _heredoc_match(cmd: str) -> Optional[re.Match[str]]:
+    """Find a heredoc operator outside inert shell quotes.
+
+    A command substitution has its own quote context. Keep that context
+    separate so a real heredoc inside $() or backtick substitutions nested in
+    an outer double-quoted string remains visible.
+    """
+    contexts: list[tuple[str, Optional[str], int]] = [("root", None, 0)]
+    backtick = chr(96)
+
+    def push(kind: str) -> None:
+        contexts.append((kind, None, 1 if kind in ("paren", "arithmetic") else 0))
+
+    i = 0
+    while i < len(cmd):
+        kind, quote, depth = contexts[-1]
+        char = cmd[i]
+        if quote == "'":
+            if char == quote:
+                contexts[-1] = (kind, None, depth)
+            i += 1
+            continue
+        if quote == '"':
+            if char == "\\":
+                i += 2
+                continue
+            if char == quote:
+                contexts[-1] = (kind, None, depth)
+                i += 1
+                continue
+            if cmd.startswith("$((", i):
+                push("arithmetic")
+                i += 3
+                continue
+            if cmd.startswith("$(", i):
+                push("paren")
+                i += 2
+                continue
+            if char == backtick:
+                push("backtick")
+                i += 1
+                continue
+            i += 1
+            continue
+        if char == "\\":
+            i += 2
+            continue
+        if char in ("'", '"'):
+            contexts[-1] = (kind, char, depth)
+            i += 1
+            continue
+        if cmd.startswith("$((", i):
+            push("arithmetic")
+            i += 3
+            continue
+        if cmd.startswith("$(", i):
+            push("paren")
+            i += 2
+            continue
+        if kind == "backtick" and char == backtick:
+            contexts.pop()
+            i += 1
+            continue
+        if char == backtick:
+            push("backtick")
+            i += 1
+            continue
+        if kind in ("paren", "arithmetic"):
+            if char == "(":
+                contexts[-1] = (kind, quote, depth + 1)
+                i += 1
+                continue
+            if char == ")":
+                if kind == "arithmetic" and depth == 1 and cmd.startswith("))", i):
+                    contexts.pop()
+                    i += 2
+                    continue
+                if depth > 1:
+                    contexts[-1] = (kind, quote, depth - 1)
+                else:
+                    contexts.pop()
+                i += 1
+                continue
+        if kind == "arithmetic":
+            i += 1
+            continue
+        if cmd.startswith("<<", i):
+            match = _HEREDOC_RE.match(cmd, i)
+            if match:
+                return match
+        i += 1
+    return None
+
+
 def heredoc_prefix(cmd: str) -> Optional[str]:
     """The command text up to (excluding) a heredoc operator, or None.
 
@@ -67,7 +161,7 @@ def heredoc_prefix(cmd: str) -> Optional[str]:
     the verify replay still gates the actual content (wrong file body →
     demo assertion fails → distiller feedback loop).
     """
-    m = _HEREDOC_RE.search(cmd)
+    m = _heredoc_match(cmd)
     if not m:
         return None
     return " ".join(cmd[: m.start()].split()).strip()
@@ -715,7 +809,7 @@ def parse_guide_steps(guide_text: str) -> list[tuple[str, str]]:
                 cmd = stripped.removeprefix("$ ").strip()
                 if not cmd:
                     continue
-                m = _HEREDOC_RE.search(cmd)
+                m = _heredoc_match(cmd)
                 if m:
                     heredoc_term = m.group(1)
                     heredoc_lines = [cmd]
