@@ -1127,6 +1127,36 @@ echo after
     ]
 
 
+@pytest.mark.parametrize(
+    ("opener", "closer"),
+    [
+        ('v="$(cat <<\'EOF\'', ')"'),
+        ('v="' + chr(96) + "cat <<'EOF'", chr(96) + '"'),
+    ],
+)
+def test_parse_guide_steps_preserves_heredocs_in_quoted_substitutions(
+    opener: str, closer: str
+):
+    """Regression (#107): quote-context transitions do not hide real heredocs."""
+    from readme2demo.distill import parse_guide_steps
+
+    guide = (
+        "### Step 1 — Nested heredoc\n\n"
+        f"{chr(96) * 3}bash\n"
+        f"{opener}\n"
+        "body\n"
+        "EOF\n"
+        f"{closer}\n"
+        "echo after\n"
+        f"{chr(96) * 3}\n"
+    )
+    assert parse_guide_steps(guide) == [
+        ("Nested heredoc", f"{opener}\nbody\nEOF"),
+        ("Nested heredoc", closer),
+        ("Nested heredoc", "echo after"),
+    ]
+
+
 @pytest.mark.parametrize("operator", ["<<'EOF'", '<<"EOF"', "<<-EOF"])
 def test_parse_guide_steps_accumulates_real_heredoc_delimiters(operator: str):
     """Regression (#107): supported shell heredoc delimiters still accumulate."""

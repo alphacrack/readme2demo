@@ -59,28 +59,87 @@ _HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?")
 
 
 def _heredoc_match(cmd: str) -> Optional[re.Match[str]]:
-    """Find a heredoc operator only when it is outside shell quotes."""
-    quote: Optional[str] = None
+    """Find a heredoc operator outside inert shell quotes.
+
+    A command substitution has its own quote context. Keep that context
+    separate so a real heredoc inside $() or backtick substitutions nested in
+    an outer double-quoted string remains visible.
+    """
+    contexts: list[tuple[str, Optional[str], int]] = [("root", None, 0)]
+    backtick = chr(96)
+
+    def push(kind: str) -> None:
+        contexts.append((kind, None, 1 if kind in ("paren", "arithmetic") else 0))
+
     i = 0
     while i < len(cmd):
+        kind, quote, depth = contexts[-1]
         char = cmd[i]
-        if quote is not None:
-            if char == "\\" and quote == '"':
+        if quote == "'":
+            if char == quote:
+                contexts[-1] = (kind, None, depth)
+            i += 1
+            continue
+        if quote == '"':
+            if char == "\\":
                 i += 2
                 continue
             if char == quote:
-                quote = None
+                contexts[-1] = (kind, None, depth)
+                i += 1
+                continue
+            if cmd.startswith("$((", i):
+                push("arithmetic")
+                i += 3
+                continue
+            if cmd.startswith("$(", i):
+                push("paren")
+                i += 2
+                continue
+            if char == backtick:
+                push("backtick")
+                i += 1
+                continue
             i += 1
             continue
         if char == "\\":
             i += 2
             continue
         if char in ("'", '"'):
-            quote = char
+            contexts[-1] = (kind, char, depth)
             i += 1
             continue
-        if char == "#" and (i == 0 or cmd[i - 1].isspace()):
-            return None
+        if cmd.startswith("$((", i):
+            push("arithmetic")
+            i += 3
+            continue
+        if cmd.startswith("$(", i):
+            push("paren")
+            i += 2
+            continue
+        if kind == "backtick" and char == backtick:
+            contexts.pop()
+            i += 1
+            continue
+        if char == backtick:
+            push("backtick")
+            i += 1
+            continue
+        if kind in ("paren", "arithmetic"):
+            if char == "(":
+                contexts[-1] = (kind, quote, depth + 1)
+                i += 1
+                continue
+            if char == ")":
+                if depth > 1:
+                    contexts[-1] = (kind, quote, depth - 1)
+                else:
+                    contexts.pop()
+                i += 1
+                continue
+        if kind == "arithmetic":
+            i += 1
+            continue
         if cmd.startswith("<<", i):
             match = _HEREDOC_RE.match(cmd, i)
             if match:
