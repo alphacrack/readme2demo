@@ -1086,6 +1086,49 @@ def test_parse_guide_steps_accumulates_heredoc():
     assert cmds[2] == "tfdrift scan"
 
 
+def test_parse_guide_steps_does_not_accumulate_quoted_shift_text():
+    """Regression (#107): quoted ``<<`` text is not a heredoc opener."""
+    from readme2demo.distill import parse_guide_steps
+
+    guide = (
+        "### Step 1 — Explain literal operators\n\n```bash\n"
+        'echo "use a << b operator"\n'
+        "printf '%s\\n' 'use a << END operator'\n"
+        "```\n"
+        "### Step 2 — Continue\n\n```bash\n"
+        "echo after\n"
+        "```\n"
+    )
+    assert parse_guide_steps(guide) == [
+        ("Explain literal operators", 'echo "use a << b operator"'),
+        ("Explain literal operators", "printf '%s\\n' 'use a << END operator'"),
+        ("Continue", "echo after"),
+    ]
+
+
+@pytest.mark.parametrize("operator", ["<<'EOF'", '<<"EOF"', "<<-EOF"])
+def test_parse_guide_steps_accumulates_real_heredoc_delimiters(operator: str):
+    """Regression (#107): supported shell heredoc delimiters still accumulate."""
+    from readme2demo.distill import parse_guide_steps
+
+    guide = (
+        "### Step 1 — Write a file\n\n```bash\n"
+        f"cat > /tmp/demo.txt {operator}\n"
+        "body << stays in the heredoc\n"
+        "EOF\n"
+        "echo after\n"
+        "```\n"
+    )
+    steps = parse_guide_steps(guide)
+    assert steps == [
+        (
+            "Write a file",
+            f"cat > /tmp/demo.txt {operator}\nbody << stays in the heredoc\nEOF",
+        ),
+        ("Write a file", "echo after"),
+    ]
+
+
 def test_tape_skips_multiline_heredoc_but_keeps_rest():
     from readme2demo.distill import tape_from_guide
 
