@@ -131,6 +131,10 @@ def _heredoc_match(cmd: str) -> Optional[re.Match[str]]:
                 i += 1
                 continue
             if char == ")":
+                if kind == "arithmetic" and depth == 1 and cmd.startswith("))", i):
+                    contexts.pop()
+                    i += 2
+                    continue
                 if depth > 1:
                     contexts[-1] = (kind, quote, depth - 1)
                 else:
