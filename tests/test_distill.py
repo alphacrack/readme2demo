@@ -1127,6 +1127,29 @@ echo after
     ]
 
 
+def test_parse_guide_steps_preserves_heredoc_after_nested_arithmetic_expansion():
+    """A completed arithmetic expansion must not close its enclosing ``$()``."""
+    from readme2demo.distill import parse_guide_steps
+
+    guide = (
+        "### Step 1 — Arithmetic before heredoc\n\n```bash\n"
+        'v="$(echo $((1 + 2)); cat <<\'EOF\'\n'
+        "body\n"
+        "EOF\n"
+        ')"\n'
+        "echo after\n"
+        "```\n"
+    )
+    assert parse_guide_steps(guide) == [
+        (
+            "Arithmetic before heredoc",
+            'v="$(echo $((1 + 2)); cat <<\'EOF\'\nbody\nEOF',
+        ),
+        ("Arithmetic before heredoc", ')"'),
+        ("Arithmetic before heredoc", "echo after"),
+    ]
+
+
 @pytest.mark.parametrize(
     ("opener", "closer"),
     [
