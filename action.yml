@@ -153,6 +153,18 @@ runs:
           exit 1
         fi
 
+    - name: Write the job summary
+      # `report` exits 1 on unverified and 2 on a failed stage BY DESIGN
+      # (cli.py _report_exit_code); the check step above already owns the red
+      # X. `|| true` keeps this step from ever failing the job, and always()
+      # mirrors the upload step: an unverified run is exactly when the summary
+      # is worth reading (#249).
+      if: ${{ always() && steps.pipeline.outputs.run-dir != '' }}
+      shell: bash
+      env:
+        R2D_RUN_DIR: ${{ steps.pipeline.outputs.run-dir }}
+      run: readme2demo report "$R2D_RUN_DIR" --markdown >>"$GITHUB_STEP_SUMMARY" || true
+
     - name: Upload run artifacts
       # always(): the unverified case is exactly when verify.log matters most.
       if: ${{ always() && steps.pipeline.outputs.run-dir != '' }}

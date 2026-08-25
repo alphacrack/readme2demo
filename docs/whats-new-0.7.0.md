@@ -39,8 +39,9 @@ is what lets a workflow fail the build.
 
 ## Step 3 — `report --markdown`: a job summary for humans (new in 0.7.0)
 
-Pipe it to `$GITHUB_STEP_SUMMARY` in CI (the Action does this for you), or
-just read it in a terminal:
+Run it with `--markdown` and pipe it to `$GITHUB_STEP_SUMMARY` in CI, or
+just read it in a terminal (the Action writes this summary for you since
+#249):
 
 ```bash
 readme2demo report examples/readme2demo --markdown
@@ -65,8 +66,9 @@ Hosting it as a live badge endpoint is documented in [Verification badge](usage.
 
 Drop ~15 lines of YAML in a repo and its README gets verified in CI — the
 Action installs readme2demo, builds the sandbox image, runs the pipeline, and
-fails the check if the fresh-container replay doesn't pass. Artifacts and the
-job summary come along for free.
+fails the check if the fresh-container replay doesn't pass. Artifacts are
+uploaded even when the check fails, and the Action appends the same
+`report --markdown` summary to the GitHub job summary (`#249`).
 
 ```bash
 cat .github/workflows/readme-check.yml
