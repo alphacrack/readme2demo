@@ -15,7 +15,7 @@ Everything below is an elaboration of that one sentence.
 
 ## Floors vs ceilings
 
-Every requirement in `pyproject.toml` is a bare `>=` floor:
+Every requirement in `pyproject.toml` is a `>=` floor, with one standard exception for interpreter compatibility:
 
 ```toml
 dependencies = [
@@ -24,8 +24,11 @@ dependencies = [
     "pydantic>=2.7",
     "jinja2>=3.1",
     "anthropic>=0.34",
+    "tomli>=2.0; python_version < '3.11'",  # stdlib tomllib shim — see marker note below
 ]
 ```
+
+> **Marker note:** `tomli` is a stdlib-parity shim (backport of `tomllib` for Python ≤3.10). The marker `python_version < '3.11'` means it is not installed on 3.11+, where `tomllib` is in stdlib, so the published wheel has no extra dep on modern interpreters. This is the only marker dep allowed in `dependencies`; all other floors are bare `>=`.
 
 **Default rule: floor only, no ceiling.** We don't add upper bounds
 unless a known-incompatible major version has been released *and* we
@@ -55,8 +58,9 @@ The minimum set needed to invoke `readme2demo` as a CLI. Currently:
 - `pydantic` — data models (`manifest.py`, `llm.py`, etc.)
 - `jinja2` — tutorial / tape templates
 - `anthropic` — see the "anthropic placement" callout below
+- `tomli` — stdlib `tomllib` backport for Python ≤3.10 (`python_version < '3.11'`; no install on 3.11+)
 
-These get a floor. Nothing else belongs in `[project.dependencies]`.
+These get a floor (the `tomli` marker floor is the stdlib-parity exception noted above). With that one exception, nothing else belongs in `[project.dependencies]`.
 
 ### `dev` extra
 
@@ -154,11 +158,7 @@ Three things it does *not* see (and the reasons why):
    the `dev` extra, so a Dependabot bump for mypy is impossible
    today. This PR adds `mypy` to the `dev` extra to make it
    visible to the pip ecosystem entry.
-2. **The `tomli; python_version < "3.11"` conditional import.**
-   Conditional/marker deps for the `tomli` fallback on
-   Python ≤3.10 are a separate decision (issue #39 — `readme2demo.toml
-   is silently ignored on Python 3.10 without tomli`); that fix
-   lands in its own PR.
+2. **The `tomli; python_version < '3.11'` marker** — now landed in this PR (issue #39). `tomli` is the `tomllib` backport for ≤3.10 and is not installed on 3.11+.
 3. **The two pinned-in-image tools.** See the section above. The
    `images/base` and `images/openhands` Dockerfiles are
    intentionally outside Dependabot's reach for the package pins,
@@ -191,7 +191,7 @@ own CI cost):
 - Adopting a lockfile (`uv.lock`, `requirements*.txt`, hash
   pinning).
 - Adding pip caching or new CI jobs.
-- The `tomli` conditional dependency (issue #39).
+- The `tomli` marker dep — landed in this PR (issue #39); see the marker note above.
 - Bumping either image pin or touching `engines/claude_code.py` /
   `engines/openhands.py`.
 - Any change to sandbox hardening flags or to what the base
@@ -201,7 +201,7 @@ own CI cost):
 
 All verified at `main` (commit `af6fd6c`).
 
-- `pyproject.toml:38-44` — runtime deps, all bare `>=` floors.
+- `pyproject.toml:38-45` — runtime deps, `>=` floors plus the one marker shim `tomli; python_version < '3.11'`.
 - `pyproject.toml:46-52` — `dev` and `docs` extras, with `mypy`
   added in this PR.
 - `pyproject.toml:54-58` — `gemini` and `openai` extras with

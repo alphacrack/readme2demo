@@ -17,6 +17,10 @@ Implement `AgentEngine` and decorate with `@register`:
   sandbox at exec time (never baked into images). Support alternative auth
   by overriding `resolve_env` (see ClaudeCodeEngine's key-OR-oauth-token,
   including the credential-format validation — copy it).
+- `credential_env_vars()`: which forwarded names hold the secret. The default
+  covers every `required_env()` name matching KEY|TOKEN|SECRET — if your
+  credential is NOT in `required_env()` (any alternative auth resolved in
+  `resolve_env`), you MUST override this too or the secret goes untreated.
 - `build_command(limits)`: one shell string run via `bash -lc` inside the
   container; reads the prompt from `PROMPT_CONTAINER_PATH`, writes the raw
   transcript to `TRANSCRIPT_CONTAINER_PATH`, stderr next to it.
