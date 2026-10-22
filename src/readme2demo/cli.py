@@ -35,6 +35,7 @@ from readme2demo.orchestrator import (
     summarize_markdown,
 )
 from readme2demo import __version__ as version
+from readme2demo import sandbox
 
 
 # Sentinel value the argv normalizer injects after a bare provider preset flag
@@ -599,6 +600,42 @@ def report(
     console.print(escape(summarize(manifest)))
     raise typer.Exit(_report_exit_code(manifest))
 
+
+
+@app.command()
+def prune(
+    dry_run: bool = typer.Option(False, "--dry-run", help="List container IDs without removing them"),
+) -> None:
+    """Remove all readme2demo-labelled containers, including running containers."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["docker", "ps", "--all", "--quiet", "--no-trunc",
+             "--filter", f"label={sandbox.CONTAINER_LABEL}"],
+            capture_output=True, text=True, timeout=60, errors="replace",
+        )
+        if proc.returncode != 0:
+            typer.echo(f"docker ps failed ({proc.returncode}): {proc.stderr.strip()}", err=True)
+            raise typer.Exit(1)
+        container_ids = proc.stdout.split()
+        for container_id in container_ids:
+            if dry_run:
+                typer.echo(container_id)
+                continue
+            proc = subprocess.run(
+                ["docker", "rm", "-f", container_id],
+                capture_output=True, text=True, timeout=60, errors="replace",
+            )
+            if proc.returncode != 0:
+                typer.echo(
+                    f"docker rm failed for {container_id} ({proc.returncode}): {proc.stderr.strip()}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        typer.echo(f"Docker prune failed: {exc}", err=True)
+        raise typer.Exit(1) from None
 
 
 def _docker_daemon_detail() -> str | None:
