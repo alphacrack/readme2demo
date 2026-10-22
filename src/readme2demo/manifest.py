@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 # Order matters: the orchestrator executes stages in this sequence.
 # tutorial runs BEFORE render: step_by_step.md is finalized (with verified
@@ -34,6 +34,12 @@ PROTECTED_VERIFIED_ARTIFACTS = frozenset(
 def protected_verified_name(path: str) -> bool:
     """True when the path's basename claims a verified artifact, by typo too."""
     return Path(path).name.strip().lower() in PROTECTED_VERIFIED_ARTIFACTS
+
+
+# Validation-context flag set by ``Manifest.load``. A record written by an older
+# build may name a stage that has since been renamed or removed; refusing it on
+# load would make that run unresumable, so only NEW records are held to STAGES.
+TOLERATE_UNKNOWN_STAGES = "tolerate_unknown_stages"
 
 
 def stage_index(stage: str) -> int | None:
@@ -83,8 +89,8 @@ class DerivedArtifact(BaseModel):
 
     @field_validator("stage")
     @classmethod
-    def stage_must_be_pipeline_stage(cls, value: str) -> str:
-        if value not in STAGES:
+    def stage_must_be_pipeline_stage(cls, value: str, info: ValidationInfo) -> str:
+        if value not in STAGES and not (info.context or {}).get(TOLERATE_UNKNOWN_STAGES):
             raise ValueError(f"Unknown derived-artifact stage: {value}")
         return value
 
@@ -173,7 +179,9 @@ class Manifest(BaseModel):
             raise ValueError(
                 f"manifest.json in {run_dir} is corrupt ({e}): delete it or re-run"
             ) from None
-        m = cls.model_validate(raw)
+        # Unknown derived stages are tolerated here (and kept by reset_from);
+        # a protected path is still refused, because that claim is never legal.
+        m = cls.model_validate(raw, context={TOLERATE_UNKNOWN_STAGES: True})
         m._run_dir = run_dir
         return m
 
@@ -266,17 +274,13 @@ class Manifest(BaseModel):
     ) -> None:
         """Record a source-derived artifact and persist it atomically.
 
-        Raises ``ValueError`` when ``path`` is a protected verified artifact
-        or when ``stage`` is not a pipeline stage. Parsed artifacts are a
-        weaker claim than a fresh-container replay, so the contract refuses
-        to let them inherit verified filenames.
+        Raises ``ValueError`` (pydantic's ``ValidationError``) when ``path`` is
+        a protected verified artifact or when ``stage`` is not a pipeline
+        stage. Both checks live on :class:`DerivedArtifact` itself, so they
+        hold for every construction path, not just this one. Parsed artifacts
+        are a weaker claim than a fresh-container replay, so the contract
+        refuses to let them inherit verified filenames.
         """
-        if protected_verified_name(path):
-            raise ValueError(
-                f"{path} is a verified artifact; derived artifacts may not use it"
-            )
-        if stage not in STAGES:
-            raise ValueError(f"Unknown derived-artifact stage: {stage}")
         artifact = DerivedArtifact(
             path=path,
             stage=stage,

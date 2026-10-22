@@ -6,8 +6,10 @@ import json
 
 import pytest
 
-from readme2demo.manifest import DerivedArtifact, Manifest
-from readme2demo.orchestrator import summarize, summarize_markdown
+from readme2demo.config import Config
+from readme2demo.manifest import PROTECTED_VERIFIED_ARTIFACTS, DerivedArtifact, Manifest
+from readme2demo.orchestrator import Orchestrator, summarize, summarize_markdown
+from readme2demo.produce import PROTECTED_ARTIFACTS
 from readme2demo.tutorial import render_badge
 
 
@@ -109,22 +111,45 @@ def test_derived_artifact_rejects_unknown_stage_at_construction() -> None:
         )
 
 
-def test_reset_from_tolerates_unknown_legacy_stage(tmp_path) -> None:
-    """Regression: an unknown stage must not make resume die with ValueError."""
+def _rewrite_first_derived(run_dir, **fields) -> None:
+    """Hand-edit the persisted record, the way an older build would have left it."""
+    path = run_dir / "manifest.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["derived"][0].update(fields)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+
+def test_resume_tolerates_unknown_legacy_stage_on_disk(tmp_path) -> None:
+    """Regression: a persisted record whose stage no longer exists must not
+    make resume die, neither in Manifest.load nor in reset_from."""
     manifest = Manifest.create(tmp_path)
-    artifact = DerivedArtifact.model_construct(
-        path="future.svg",
-        stage="future-stage",
-        tool="codeflow",
-        tool_version="v1",
-        source_commit_sha="a" * 40,
-        produced_at="2026-08-06T12:00:00+00:00",
+    manifest.record_derived(
+        path="future.svg", stage="ingest", tool="codeflow",
+        tool_version="v1", source_commit_sha="a" * 40,
     )
-    manifest.derived = [artifact]
+    _rewrite_first_derived(tmp_path, stage="gone-stage")
 
-    manifest.reset_from("render")
+    orch = Orchestrator.resume(tmp_path, Config(runs_dir=tmp_path), from_stage="render")
 
-    assert manifest.derived == [artifact]
+    assert [artifact.stage for artifact in orch.manifest.derived] == ["gone-stage"]
+
+
+def test_load_still_refuses_a_protected_path_on_disk(tmp_path) -> None:
+    """Regression: load tolerates legacy stages, never a verified filename."""
+    manifest = Manifest.create(tmp_path)
+    manifest.record_derived(
+        path="architecture.svg", stage="ingest", tool="codeflow",
+        tool_version="v1", source_commit_sha="a" * 40,
+    )
+    _rewrite_first_derived(tmp_path, path="commands.sh")
+
+    with pytest.raises(ValueError, match="verified artifact"):
+        Manifest.load(tmp_path)
+
+
+def test_protected_lists_agree_with_produce() -> None:
+    """Regression: a protected artifact added to produce must reach the derived check."""
+    assert frozenset(PROTECTED_ARTIFACTS) == PROTECTED_VERIFIED_ARTIFACTS
 
 
 def test_reset_from_drops_reproduced_derived_records(tmp_path) -> None:
