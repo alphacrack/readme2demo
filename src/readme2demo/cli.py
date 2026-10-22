@@ -509,7 +509,11 @@ def resume(
         )
     cfg = _apply_engine_image(cfg)
     _preflight(cfg)
-    orch = Orchestrator.resume(run_dir, cfg, from_stage=from_stage)
+    try:
+        orch = Orchestrator.resume(run_dir, cfg, from_stage=from_stage)
+    except (OSError, ValueError) as e:
+        console.print(f"[red]✗ {escape(str(e))}[/]")
+        raise typer.Exit(2)
     _drive(orch)
 
 
@@ -562,7 +566,11 @@ def report(
     """
     if json_output and markdown_output:
         raise typer.BadParameter("--json and --markdown are mutually exclusive")
-    manifest = Manifest.load(run_dir)
+    try:
+        manifest = Manifest.load(run_dir)
+    except (OSError, ValueError) as e:
+        console.print(f"[red]✗ {escape(str(e))}[/]")
+        raise typer.Exit(2)
     if markdown_output:
         # The renderer is pure; the CLI owns the filesystem side. Existence
         # checks only — never parse other run files, so partial runs report.
@@ -590,6 +598,31 @@ def report(
     # escape(): stage errors may contain [bracketed] text Rich would swallow.
     console.print(escape(summarize(manifest)))
     raise typer.Exit(_report_exit_code(manifest))
+
+
+
+def _docker_daemon_detail() -> str | None:
+    """Probe ``docker info``; return daemon detail string or None if healthy."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=5,
+        )
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            return tail[-1].strip() if tail else "docker info failed"
+        return None
+    except FileNotFoundError:
+        return None  # docker CLI missing already reported
+    except OSError as e:
+        return str(e).strip().splitlines()[-1].strip() if str(e).strip() else "unknown error"
+    except subprocess.TimeoutExpired:
+        return "docker info timed out"
 
 
 def _preflight(cfg: Config) -> None:
@@ -643,6 +676,10 @@ def _preflight(cfg: Config) -> None:
             problems.append(
                 "docker CLI not found on PATH — install Docker Desktop and retry."
             )
+        else:
+            detail = _docker_daemon_detail()
+            if detail is not None:
+                problems.append(f"Docker is not usable — {detail}. Start Docker Desktop (or dockerd) and retry.")
 
     if problems:
         for p in problems:
