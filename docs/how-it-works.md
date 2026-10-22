@@ -59,6 +59,10 @@ drives the verification badge.
 at a known commit. Nothing ran, so it is never called verified and can never
 inherit a verified filename.
 
+No stage produces derived artifacts yet: every artifact published today is
+verified. The contract lands first so the first derived artifact (planned for
+the codebase tour) cannot be mislabeled when it arrives.
+
 ## Security model
 
 READMEs are untrusted code, so the agent runs inside a container hardened with
