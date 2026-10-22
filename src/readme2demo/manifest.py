@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 # Order matters: the orchestrator executes stages in this sequence.
 # tutorial runs BEFORE render: step_by_step.md is finalized (with verified
@@ -23,6 +23,31 @@ STAGES = ["ingest", "agent", "normalize", "distill", "verify", "tutorial", "rend
 StageStatus = Literal["pending", "running", "completed", "failed", "skipped"]
 
 MANIFEST_FILENAME = "manifest.json"
+
+# Filenames that only a fresh-container replay may produce. A derived record
+# must never claim one of these even by typo.
+PROTECTED_VERIFIED_ARTIFACTS = frozenset(
+    {"commands.sh", "step_by_step.md", "demo.tape", "demo.mp4"}
+)
+
+
+def protected_verified_name(path: str) -> bool:
+    """True when the path's basename claims a verified artifact, by typo too."""
+    return Path(path).name.strip().lower() in PROTECTED_VERIFIED_ARTIFACTS
+
+
+# Validation-context flag set by ``Manifest.load``. A record written by an older
+# build may name a stage that has since been renamed or removed; refusing it on
+# load would make that run unresumable, so only NEW records are held to STAGES.
+TOLERATE_UNKNOWN_STAGES = "tolerate_unknown_stages"
+
+
+def stage_index(stage: str) -> int | None:
+    """Return a stage's index, or None when it is unknown."""
+    try:
+        return STAGES.index(stage)
+    except ValueError:
+        return None
 
 
 def utcnow() -> str:
@@ -36,6 +61,38 @@ class StageRecord(BaseModel):
     error: Optional[str] = None
     cost_usd: float = 0.0
     meta: dict = Field(default_factory=dict)
+
+
+class DerivedArtifact(BaseModel):
+    """A run-dir file produced by PARSING source, not by executing anything.
+
+    Never "verified": nothing ran. The fields exist so a reader can reproduce
+    the artifact — tool + tool_version against source_commit_sha.
+    """
+
+    path: str
+    stage: str
+    tool: str
+    tool_version: str
+    source_commit_sha: str
+    produced_at: str
+    note: str = ""
+
+    @field_validator("path")
+    @classmethod
+    def path_must_not_claim_verified(cls, value: str) -> str:
+        if protected_verified_name(value):
+            raise ValueError(
+                f"{value} is a verified artifact; derived artifacts may not use it"
+            )
+        return value
+
+    @field_validator("stage")
+    @classmethod
+    def stage_must_be_pipeline_stage(cls, value: str, info: ValidationInfo) -> str:
+        if value not in STAGES and not (info.context or {}).get(TOLERATE_UNKNOWN_STAGES):
+            raise ValueError(f"Unknown derived-artifact stage: {value}")
+        return value
 
 
 def stage_duration(record: StageRecord) -> Optional[float]:
@@ -71,6 +128,7 @@ class Manifest(BaseModel):
         default_factory=lambda: {s: StageRecord() for s in STAGES}
     )
     verified: bool = False
+    derived: list[DerivedArtifact] = Field(default_factory=list)
     total_cost_usd: float = 0.0
     # Extra output formats dispatched AFTER render by produce.produce (#230):
     # name -> "produced" | "skipped: <reason>". Formats are not stages — they
@@ -121,7 +179,9 @@ class Manifest(BaseModel):
             raise ValueError(
                 f"manifest.json in {run_dir} is corrupt ({e}): delete it or re-run"
             ) from None
-        m = cls.model_validate(raw)
+        # Unknown derived stages are tolerated here (and kept by reset_from);
+        # a protected path is still refused, because that claim is never legal.
+        m = cls.model_validate(raw, context={TOLERATE_UNKNOWN_STAGES: True})
         m._run_dir = run_dir
         return m
 
@@ -200,6 +260,51 @@ class Manifest(BaseModel):
         self.formats.update(results)
         self.save()
 
+    # -- derived artifacts ----------------------------------------------------
+
+    def record_derived(
+        self,
+        *,
+        path: str,
+        stage: str,
+        tool: str,
+        tool_version: str,
+        source_commit_sha: str,
+        note: str = "",
+    ) -> None:
+        """Record a source-derived artifact and persist it atomically.
+
+        Raises ``ValueError`` (pydantic's ``ValidationError``) when ``path`` is
+        a protected verified artifact or when ``stage`` is not a pipeline
+        stage. Both checks live on :class:`DerivedArtifact` itself, so they
+        hold for every construction path, not just this one. Parsed artifacts
+        are a weaker claim than a fresh-container replay, so the contract
+        refuses to let them inherit verified filenames.
+        """
+        artifact = DerivedArtifact(
+            path=path,
+            stage=stage,
+            tool=tool,
+            tool_version=tool_version,
+            source_commit_sha=source_commit_sha,
+            produced_at=utcnow(),
+            note=note,
+        )
+        self.derived.append(artifact)
+        self.save()
+
+    def derived_provenance_line(self, artifact: DerivedArtifact) -> str:
+        """Return the shared provenance sentence for one derived artifact."""
+        repo = self.repo_url or "<repo>"
+        sha7 = artifact.source_commit_sha[:7]
+        date = artifact.produced_at[:10]
+        return (
+            f"Derived from {repo} @ {sha7} by {artifact.tool} "
+            f"{artifact.tool_version} on {date} — parsed, not executed."
+        )
+
+    # -- format costs ---------------------------------------------------------
+
     def record_format_cost(self, name: str, cost_usd: float) -> None:
         """Account LLM spend a format builder incurred, and persist.
 
@@ -237,6 +342,12 @@ class Manifest(BaseModel):
             self.stages[s] = StageRecord()
         if idx <= STAGES.index("verify"):
             self.verified = False
+        self.derived = [
+            artifact
+            for artifact in self.derived
+            if (artifact_stage_index := stage_index(artifact.stage)) is None
+            or artifact_stage_index < idx
+        ]
         self.save()
 
 
