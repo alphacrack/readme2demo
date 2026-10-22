@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Optional
 
 
+CONTAINER_LABEL = "readme2demo=1"
+
+
 class SandboxError(RuntimeError):
     pass
 
@@ -112,7 +115,7 @@ class Sandbox:
         cmd = [
             "docker", "run", "-d",
             "--name", self.name,
-            "--label", "readme2demo=1",
+            "--label", CONTAINER_LABEL,
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--memory", self.memory,

@@ -6,6 +6,7 @@ helper that reconciles the positional repo, ``-gr/--github-repo``, and the
 """
 
 from pathlib import Path
+import subprocess
 
 import pytest
 import typer
@@ -24,6 +25,162 @@ from readme2demo.cli import app
 _URL = "https://github.com/owner/repo"
 
 runner = CliRunner()
+
+
+class _PruneDocker:
+    """Model labelled container listing and removal; reject other commands."""
+
+    def __init__(self) -> None:
+        self.selector = "readme2demo=1"
+        self.containers = {
+            "a" * 64: {"readme2demo": "1"},
+            "b" * 64: {"readme2demo": "1"},
+            "c" * 64: {},
+            "d" * 64: {"another-tool": "1"},
+            "e" * 64: {"readme2demo": "0"},
+        }
+        self.calls: list[list[str]] = []
+        self.removed: list[str] = []
+        self.list_failure: int | Exception | None = None
+        self.remove_failures: dict[str, int | Exception] = {}
+
+    def __call__(self, cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        self.calls.append(list(cmd))
+        if cmd == [
+            "docker", "ps", "--all", "--quiet", "--no-trunc",
+            "--filter", f"label={self.selector}",
+        ]:
+            if isinstance(self.list_failure, Exception):
+                raise self.list_failure
+            if self.list_failure is not None:
+                return subprocess.CompletedProcess(cmd, self.list_failure, "", "daemon unavailable")
+            key, value = self.selector.split("=", 1)
+            ids = [cid for cid, labels in self.containers.items()
+                   if labels.get(key) == value]
+            return subprocess.CompletedProcess(cmd, 0, "\n".join(ids) + "\n", "")
+        if cmd[:3] == ["docker", "rm", "-f"] and len(cmd) == 4:
+            cid = cmd[3]
+            assert cid in self.containers, f"Unknown container: {cid}"
+            failure = self.remove_failures.get(cid)
+            if isinstance(failure, Exception):
+                raise failure
+            if failure is not None:
+                return subprocess.CompletedProcess(cmd, failure, "", "removal denied")
+            self.removed.append(cid)
+            del self.containers[cid]
+            return subprocess.CompletedProcess(cmd, 0, cid + "\n", "")
+        if cmd[:3] == ["docker", "run", "-d"]:
+            label = cmd[cmd.index("--label") + 1]
+            key, value = label.split("=", 1)
+            self.containers["f" * 64] = {key: value}
+            return subprocess.CompletedProcess(cmd, 0, "f" * 64 + "\n", "")
+        raise AssertionError(f"Unexpected Docker command: {cmd}")
+
+
+@pytest.fixture
+def prune_docker(monkeypatch: pytest.MonkeyPatch) -> _PruneDocker:
+    """Install the strict Docker subprocess double."""
+    fake = _PruneDocker()
+    monkeypatch.setattr(subprocess, "run", fake)
+    return fake
+
+
+def test_prune_dry_run_lists_only_labelled_containers(prune_docker: _PruneDocker) -> None:
+    """Regression: prune dry-run lists matching IDs without removing containers."""
+    result = runner.invoke(app, ["prune", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == ["a" * 64, "b" * 64]
+    assert prune_docker.removed == []
+    assert len(prune_docker.calls) == 1
+
+
+def test_prune_removes_only_the_listed_containers(prune_docker: _PruneDocker) -> None:
+    """Regression: prune removes exactly the labelled snapshot and preserves other containers."""
+    result = runner.invoke(app, ["prune"])
+
+    assert result.exit_code == 0, result.output
+    assert prune_docker.removed == ["a" * 64, "b" * 64]
+    assert set(prune_docker.containers) == {"c" * 64, "d" * 64, "e" * 64}
+    assert prune_docker.calls[1:] == [
+        ["docker", "rm", "-f", "a" * 64],
+        ["docker", "rm", "-f", "b" * 64],
+    ]
+
+
+@pytest.mark.parametrize("args", [["prune"], ["prune", "--dry-run"]])
+def test_prune_empty_listing_never_calls_remove(
+    prune_docker: _PruneDocker, args: list[str],
+) -> None:
+    """Regression: an empty prune listing succeeds without invoking removal."""
+    prune_docker.containers.clear()
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert len(prune_docker.calls) == 1
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("args", [["prune"], ["prune", "--dry-run"]])
+@pytest.mark.parametrize("failure, message", [
+    (1, "daemon unavailable"),
+    (FileNotFoundError("docker CLI not found"), "docker CLI not found"),
+    (PermissionError("permission denied"), "permission denied"),
+    (subprocess.TimeoutExpired("docker ps", 60), "timed out"),
+])
+def test_prune_listing_failure_is_reported(
+    prune_docker: _PruneDocker, args: list[str], failure: int | Exception, message: str,
+) -> None:
+    """Regression: a failed prune listing reports stderr and cannot look successful."""
+    prune_docker.list_failure = failure
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code != 0
+    assert message in result.stderr
+    assert len(prune_docker.calls) == 1
+
+
+@pytest.mark.parametrize("failed_id, removed", [
+    ("a" * 64, []),
+    ("b" * 64, ["a" * 64]),
+])
+@pytest.mark.parametrize("failure, message", [
+    (1, "removal denied"),
+    (FileNotFoundError("docker CLI not found"), "docker CLI not found"),
+    (PermissionError("permission denied"), "permission denied"),
+    (subprocess.TimeoutExpired("docker rm", 60), "timed out"),
+])
+def test_prune_removal_failure_is_reported(
+    prune_docker: _PruneDocker, failed_id: str, removed: list[str],
+    failure: int | Exception, message: str,
+) -> None:
+    """Regression: both total and partial removal failures exit nonzero with stderr."""
+    prune_docker.remove_failures[failed_id] = failure
+
+    result = runner.invoke(app, ["prune"])
+
+    assert result.exit_code != 0
+    assert message in result.stderr
+    assert prune_docker.removed == removed
+    assert failed_id in prune_docker.containers
+
+
+def test_prune_uses_the_sandbox_label(
+    prune_docker: _PruneDocker, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: sandbox creation and prune selection share the same label value."""
+    import readme2demo.sandbox as sandbox_mod
+
+    monkeypatch.setattr(sandbox_mod, "CONTAINER_LABEL", "readme2demo=regression")
+    prune_docker.selector = "readme2demo=regression"
+    sandbox_mod.Sandbox(image="test-image", name="r2d-test").start()
+
+    result = runner.invoke(app, ["prune", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == ["f" * 64]
 
 
 def _stub_docker_daemon_probe(monkeypatch) -> None:
