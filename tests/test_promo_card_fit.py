@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from readme2demo import promo, promo_script
-from readme2demo.brand import escape_drawtext
+from readme2demo.brand import escape_drawtext, title_card_drawtext
 from readme2demo.config import Config
 from readme2demo.types import AgentResult, CommandEntry, CommandLog, PromoScene, PromoScript
 
@@ -220,6 +220,23 @@ def test_unbounded_multiline_card_is_refused() -> None:
     assert _violations(text)
     with pytest.raises(promo.PromoError, match="fit"):
         promo._card_drawtexts(text, Config(), fontsize=54)
+
+
+def test_real_fit_card_at_model_boundary_may_wrap_stays_inside_margins(tmp_path: Path) -> None:
+    """Regression: cards fitting real fonts may wrap and must remain inside margins."""
+    text = "z" * 30
+    cfg = Config()
+    style = "energetic"
+    assert _violations(text) == []
+    _assert_geometry([
+        title_card_drawtext(text, cfg, fontsize=promo.STYLES[style].card_fontsize),
+    ])
+    # Lead ruling: identity applies to conservative-budget fits, not real-font fits.
+    graph = _graph(text, style, tmp_path, cfg)
+    for index in (1, 2):
+        filters = _card_filters(graph, index)
+        _assert_preserved(filters, text)
+        _assert_geometry(filters)
 
 
 def test_fitting_cards_match_base_filtergraphs(tmp_path: Path) -> None:
