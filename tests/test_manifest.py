@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from readme2demo.manifest import Manifest
+from readme2demo.manifest import DerivedArtifact, Manifest
 from readme2demo.orchestrator import summarize, summarize_markdown
 from readme2demo.tutorial import render_badge
 
@@ -77,6 +77,54 @@ def test_record_derived_rejects_unknown_stage(tmp_path) -> None:
             tool_version="v1",
             source_commit_sha="a" * 40,
         )
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["./commands.sh", "sub/step_by_step.md", "Commands.sh", "demo.tape "],
+)
+def test_derived_artifact_rejects_protected_name_by_typo(path) -> None:
+    """Regression: derived records must not claim a verified filename by typo."""
+    with pytest.raises(ValueError, match="verified artifact"):
+        DerivedArtifact(
+            path=path,
+            stage="ingest",
+            tool="codeflow",
+            tool_version="v1",
+            source_commit_sha="a" * 40,
+            produced_at="2026-08-06T12:00:00+00:00",
+        )
+
+
+def test_derived_artifact_rejects_unknown_stage_at_construction() -> None:
+    """Regression: the model itself must enforce the pipeline-stage contract."""
+    with pytest.raises(ValueError, match="Unknown derived-artifact stage"):
+        DerivedArtifact(
+            path="architecture.svg",
+            stage="not-a-stage",
+            tool="codeflow",
+            tool_version="v1",
+            source_commit_sha="a" * 40,
+            produced_at="2026-08-06T12:00:00+00:00",
+        )
+
+
+def test_reset_from_tolerates_unknown_legacy_stage(tmp_path) -> None:
+    """Regression: an unknown stage must not make resume die with ValueError."""
+    manifest = Manifest.create(tmp_path)
+    artifact = DerivedArtifact.model_construct(
+        path="future.svg",
+        stage="future-stage",
+        tool="codeflow",
+        tool_version="v1",
+        source_commit_sha="a" * 40,
+        produced_at="2026-08-06T12:00:00+00:00",
+    )
+    manifest.derived = [artifact]
+
+    manifest.reset_from("render")
+
+    assert manifest.derived == [artifact]
 
 
 def test_reset_from_drops_reproduced_derived_records(tmp_path) -> None:
@@ -156,7 +204,34 @@ def test_summaries_keep_derived_section_separate(tmp_path) -> None:
     human = summarize(manifest)
     markdown = summarize_markdown(manifest, artifacts=[])
 
-    assert "Derived (parsed from source at abcdef1 — not executed)" in human
-    assert "Derived (parsed from source at abcdef1 — not executed)" in markdown
+    assert "Derived (parsed from source — not executed)" in human
+    assert "## Derived (parsed from source — not executed)" in markdown
+    assert "at abcdef1" not in human.splitlines()[human.splitlines().index("Derived (parsed from source — not executed)")]
+    assert "at abcdef1" not in markdown.splitlines()[markdown.splitlines().index("## Derived (parsed from source — not executed)")]
     assert "parsed, not executed." in human
     assert "parsed, not executed." in markdown
+
+
+def test_summaries_emit_one_derived_heading(tmp_path) -> None:
+    """Regression: the derived section must have one heading, not one per row."""
+    manifest = Manifest.create(tmp_path, repo_url="https://github.com/owner/repo")
+    manifest.record_derived(
+        path="a.svg",
+        stage="ingest",
+        tool="codeflow",
+        tool_version="v1",
+        source_commit_sha="a" * 40,
+    )
+    manifest.record_derived(
+        path="b.svg",
+        stage="normalize",
+        tool="codeflow",
+        tool_version="v1",
+        source_commit_sha="b" * 40,
+    )
+
+    human = summarize(manifest)
+    markdown = summarize_markdown(manifest, artifacts=[])
+
+    assert human.count("Derived (parsed from source — not executed)") == 1
+    assert markdown.count("## Derived (parsed from source — not executed)") == 1
