@@ -10,6 +10,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from readme2demo.llm import DEFAULT_ANTHROPIC_MODEL
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover
@@ -37,7 +39,7 @@ class Config(BaseModel):
 
     # Agent engine
     engine: str = "claude-code"  # or "openhands" (used by --gemini/--openai/--anthropic)
-    model: str = "claude-sonnet-5"  # model for planner/distiller/tutorial LLM calls
+    model: str = DEFAULT_ANTHROPIC_MODEL  # model for planner/distiller/tutorial LLM calls
     llm_backend: str = "auto"  # auto | api | claude-cli | gemini | openai (presets set one; claude-cli = host `claude -p`, self-hosted only)
     max_turns: int = 60
     agent_timeout_s: int = 1500
@@ -177,8 +179,16 @@ class Config(BaseModel):
         path = toml_path or Path("readme2demo.toml")
         if toml_path is not None and not path.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
-        if path.exists() and tomllib is not None:
-            with open(path, "rb") as f:
-                data.update(tomllib.load(f))
+        if path.exists():
+            if tomllib is not None:
+                with open(path, "rb") as f:
+                    data.update(tomllib.load(f))
+            else:
+                warnings.warn(
+                    f"Found {path} but no TOML parser is available — "
+                    "pip install tomli (Python <3.11) or upgrade to Python 3.11+",
+                    UserWarning,
+                    stacklevel=2,
+                )
         data.update({k: v for k, v in overrides.items() if v is not None})
         return cls(**data)

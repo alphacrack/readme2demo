@@ -762,6 +762,65 @@ def test_render_badge_no_commit_sha_omits_commit_key():
     assert "commit" not in tutorial.render_badge(Manifest(run_id="t", verified=False))
 
 
+def test_gif_preview_warns_on_ffmpeg_failure(tmp_path, monkeypatch, capsys):
+    """Regression (#42): a nonzero ffmpeg exit must warn, not vanish silently."""
+    from readme2demo import render as render_mod
+    from readme2demo.config import Config
+
+    class _Proc:
+        returncode = 1
+        stdout = ""
+        stderr = "[out#0/gif] No space left on device\n"
+
+    monkeypatch.setattr(render_mod.subprocess, "run", lambda *a, **k: _Proc())
+    render_mod._generate_gif_preview(tmp_path, "img", Config())
+    out = capsys.readouterr().out
+    assert "GIF preview exited with 1" in out
+    assert "No space left on device" in out
+
+def test_gif_preview_silent_on_success(tmp_path, monkeypatch, capsys):
+    """Regression (#42): happy path stays silent."""
+    from readme2demo import render as render_mod
+    from readme2demo.config import Config
+
+    class _Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(render_mod.subprocess, "run", lambda *a, **k: _Proc())
+    render_mod._generate_gif_preview(tmp_path, "img", Config())
+    assert capsys.readouterr().out == ""
+
+def test_gif_preview_warns_on_timeout(tmp_path, monkeypatch, capsys):
+    """Regression (#42): TimeoutExpired must warn with fixed string."""
+    from readme2demo import render as render_mod
+    from readme2demo.config import Config
+    import subprocess
+
+    def _raiser(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="docker run", timeout=300)
+
+    monkeypatch.setattr(render_mod.subprocess, "run", _raiser)
+    render_mod._generate_gif_preview(tmp_path, "img", Config())
+    out = capsys.readouterr().out
+    assert "GIF preview timed out after 300s" in out
+
+
+def test_gif_preview_warns_on_oserror(tmp_path, monkeypatch, capsys):
+    """Regression (#42): OSError must warn rather than vanish silently."""
+    from readme2demo import render as render_mod
+    from readme2demo.config import Config
+
+    def _raiser(*a, **k):
+        raise OSError(2, "No such file or directory", "docker")
+
+    monkeypatch.setattr(render_mod.subprocess, "run", _raiser)
+    render_mod._generate_gif_preview(tmp_path, "img", Config())
+    out = capsys.readouterr().out
+    assert "GIF preview generation failed" in out
+    assert "No such file or directory" in out
+
 def test_write_badge_json_roundtrip(tmp_path: Path):
     import json as _json
 
