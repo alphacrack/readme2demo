@@ -92,9 +92,9 @@ DURATION_TOLERANCE_S = 0.5
 #: offset to 3 decimals, so an exact-boundary cut must not be a violation.
 BOUNDS_TOLERANCE_S = 0.05
 
-#: Raw card budget, including whitespace/newlines. The compositor wraps within
-#: promo.CARD_TEXT_W/H and reduces to promo.CARD_MIN_FONTSIZE for dense lines.
-MAX_CARD_TEXT_CHARS = 120
+#: Raw card budget, including whitespace/newlines, capped by renderer capacity:
+#: a nonblank N-character card has at most N explicit/wrapped lines.
+MAX_CARD_TEXT_CHARS = min(120, promo.card_text_capacity())
 
 
 # -- card text: which spans are COMMANDS (and therefore need grounding) -------

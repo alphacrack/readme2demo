@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -173,6 +175,81 @@ def test_raw_card_budget_includes_whitespace(text: str) -> None:
     """Regression: padding cannot admit an unbounded number of explicit lines."""
     assert _violations(text) == []
     assert _violations(text + "\n")
+
+
+@pytest.mark.parametrize("tabs", [1, 10], ids=["single", "repeated"])
+@pytest.mark.parametrize("prefix", ["", "i", "ii", "iii"],
+                         ids=["phase-zero", "phase-one", "phase-two", "phase-three"])
+@pytest.mark.parametrize("font", [None, "DejaVu Sans Mono", "DejaVu Serif"],
+                         ids=["default", "mono", "serif"])
+@pytest.mark.parametrize("style", ["minimal", "tech", "energetic"])
+def test_tab_stops_fit_canvas_across_phases(
+    tabs: int, prefix: str, font: str | None, style: str, tmp_path: Path,
+) -> None:
+    """Regression: repeated tabs fit even when the first tab starts between stops."""
+    text = prefix + "\t" * tabs + "W"
+    assert _violations(text) == []
+    graph = _graph(text, style, tmp_path, Config(brand_font=font))
+    all_filters = []
+    for index in (1, 2):
+        filters = _card_filters(graph, index)
+        _assert_preserved(filters, text)
+        all_filters.extend(filters)
+    _assert_geometry(all_filters)
+
+
+@pytest.mark.parametrize("style", ["minimal", "tech", "energetic"])
+def test_validator_budget_tracks_renderer_capacity(
+    style: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: changing usable height changes the accepted and rendered line budget."""
+    monkeypatch.setattr(promo, "CANVAS_H", 68)
+    monkeypatch.setattr(promo, "CARD_TEXT_H", 20)
+    # At the font floor, four lines occupy 18px; five would need 22px.
+    spec = importlib.util.spec_from_file_location(
+        "readme2demo._promo_script_capacity_test", promo_script.__file__,
+    )
+    assert spec is not None and spec.loader is not None
+    validator = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, validator)
+    spec.loader.exec_module(validator)
+    text = "W\n\n\n"
+    log = CommandLog(engine="claude-code", result=AgentResult(outcome="success"))
+    assert validator._card_violations("title", _script(text).scenes[0], set(), log, "") == []
+    assert validator._card_violations(
+        "title", _script(text + "\n").scenes[0], set(), log, "",
+    )
+    filters = _card_filters(_graph(text, style, tmp_path, Config()), 1)
+    _assert_preserved(filters, text)
+    _assert_geometry(filters)
+
+
+@pytest.mark.parametrize(
+    "style, lines, expected_size",
+    [
+        ("minimal", 9, 48), ("minimal", 10, 44),
+        ("tech", 8, 54), ("tech", 9, 49),
+        ("energetic", 7, 60), ("energetic", 8, 55),
+    ],
+    ids=["minimal-fit", "minimal-overflow", "tech-fit", "tech-overflow",
+         "energetic-fit", "energetic-overflow"],
+)
+def test_vertical_fit_stops_at_first_fitting_size(
+    style: str, lines: int, expected_size: int, tmp_path: Path,
+) -> None:
+    """Regression: adjacent line counts preserve size or shrink only to the first fit."""
+    # Independently solve (lines-1)*round(1.4*size)+2*size <= 652 at each style cap.
+    text = "\n".join(["W"] * lines)
+    assert _violations(text) == []
+    graph = _graph(text, style, tmp_path, Config())
+    all_filters = []
+    for index in (1, 2):
+        filters = _card_filters(graph, index)
+        _assert_preserved(filters, text)
+        sizes = {int(re.search(r":fontsize=(\d+):", f)[1]) for f in filters}
+        assert sizes == {expected_size}
+        all_filters.extend(filters)
+    _assert_geometry(all_filters)
 
 
 @pytest.mark.parametrize("style", ["minimal", "tech", "energetic"])

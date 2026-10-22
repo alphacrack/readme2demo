@@ -544,14 +544,25 @@ _CARD_LINE_SPACING = 1.4
 # when a brand font exceeds them. Builders deliberately do not resolve fonts.
 _CARD_WIDTH_SAFETY = 1.1
 _CARD_GLYPH_HEIGHT_EM = 2.0
-# Even a 120-character card made entirely of explicit lines fits at this floor
-# (four-pixel line steps); larger floors would lose accepted newline-heavy cards.
+#: Font floor whose stacked-line capacity also bounds the validator's budget.
 CARD_MIN_FONTSIZE = 3
+#: drawtext's default tab stop, measured in space advances.
+_CARD_TAB_SPACES = 4
+
+
+def card_text_capacity() -> int:
+    """Maximum stacked lines supported by the usable height at the font floor."""
+    step = round(CARD_MIN_FONTSIZE * _CARD_LINE_SPACING)
+    glyph_height = math.ceil(CARD_MIN_FONTSIZE * _CARD_GLYPH_HEIGHT_EM)
+    return max(0, 1 + (CARD_TEXT_H - glyph_height) // step)
 
 
 def _card_char_width(char: str, fontsize: int) -> int:
     """Conservative pixel advance, without resolving a host/container font."""
-    if char == "\t" or unicodedata.east_asian_width(char) in {"W", "F"}:
+    if char == "\t":
+        # Any starting phase advances by at most one full four-space tab stop.
+        return _CARD_TAB_SPACES * _card_char_width(" ", fontsize)
+    if unicodedata.east_asian_width(char) in {"W", "F"}:
         em = 2.0
     elif char in "ijlrtfx.,:;!| ":
         em = 0.6
