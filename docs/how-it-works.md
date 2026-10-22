@@ -49,6 +49,16 @@ verification badge that every tutorial carries:
 If the replay does not pass, the output ships loudly labeled `⚠ UNVERIFIED` —
 it is never silently published.
 
+## Verified vs derived
+
+**Verified** means a fresh container actually executed the commands and the
+replay passed. Only that replay sets `manifest.verified`, and only that flag
+drives the verification badge.
+
+**Derived** means an artifact was produced deterministically by parsing source
+at a known commit. Nothing ran, so it is never called verified and can never
+inherit a verified filename.
+
 ## Security model
 
 READMEs are untrusted code, so the agent runs inside a container hardened with
