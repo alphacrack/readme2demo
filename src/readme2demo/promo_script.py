@@ -92,8 +92,8 @@ DURATION_TOLERANCE_S = 0.5
 #: offset to 3 decimals, so an exact-boundary cut must not be a violation.
 BOUNDS_TOLERANCE_S = 0.05
 
-#: Longest on-screen card text accepted — beyond this it is a paragraph, not a
-#: card, and it will not be readable in the cut.
+#: Raw card budget, including whitespace/newlines. The compositor wraps within
+#: promo.CARD_TEXT_W/H and reduces to promo.CARD_MIN_FONTSIZE for dense lines.
 MAX_CARD_TEXT_CHARS = 120
 
 
@@ -639,7 +639,8 @@ def _card_violations(
 ) -> list[str]:
     """Structural + card-text checks for a ``title_card`` / ``end_card`` scene.
 
-    The structural half (text present, short, no video offsets) is unchanged.
+    The structural half requires nonblank text within the raw character budget
+    (including newlines) and no video offsets.
     The content half exists because ``prompts/promo_script.md`` asks the end card
     to carry the install/success command verbatim: a prompt rule with no parser
     let an invented ``pip install …`` through with zero violations, straight into
@@ -647,12 +648,13 @@ def _card_violations(
     still free — only command-shaped spans have to be backed.
     """
     out: list[str] = []
-    text = (scene.text or "").strip()
+    raw_text = scene.text or ""
+    text = raw_text.strip()
     if not text:
         out.append(f"{tag}: a {scene.kind} needs non-empty on-screen `text`")
-    elif len(text) > MAX_CARD_TEXT_CHARS:
+    elif len(raw_text) > MAX_CARD_TEXT_CHARS:
         out.append(
-            f"{tag}: card text is {len(text)} characters — keep it under "
+            f"{tag}: card text is {len(raw_text)} characters — keep it at most "
             f"{MAX_CARD_TEXT_CHARS} so it is readable on screen"
         )
     allowed = f" ({success_cmd!r})" if success_cmd else ""

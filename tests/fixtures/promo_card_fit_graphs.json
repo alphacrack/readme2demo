@@ -1,0 +1,97 @@
+[
+  {
+    "text": "Verified",
+    "style": "minimal",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.000,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.600:offset=1.400[x1];[x1][v2]xfade=transition=fade:duration=0.600:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "pip install readme2demo",
+    "style": "minimal",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=pip install readme2demo:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.000,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=pip install readme2demo:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.600:offset=1.400[x1];[x1][v2]xfade=transition=fade:duration=0.600:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "é界: it's 50% [x]\\x",
+    "style": "minimal",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=é界\\\\: it\\\\\\'s 50% \\[x\\]\\\\\\\\x:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.000,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=é界\\\\: it\\\\\\'s 50% \\[x\\]\\\\\\\\x:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.600:offset=1.400[x1];[x1][v2]xfade=transition=fade:duration=0.600:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "r2d\nVerified",
+    "style": "minimal",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=r2d:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-34,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2+34,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.000,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=r2d:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-34,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2+34,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.600:offset=1.400[x1];[x1][v2]xfade=transition=fade:duration=0.600:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "\nVerified\n",
+    "style": "minimal",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-67,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2+67,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.000,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2-67,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2+67,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.600:offset=1.400[x1];[x1][v2]xfade=transition=fade:duration=0.600:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxx",
+    "style": "minimal",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=xxxxxxxxxxxxxxxxxxxxxxxx:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.000,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=xxxxxxxxxxxxxxxxxxxxxxxx:expansion=none:fontcolor=#7C6BF2:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.600:offset=1.400[x1];[x1][v2]xfade=transition=fade:duration=0.600:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "Verified",
+    "style": "tech",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.250,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.400:offset=1.600[x1];[x1][v2]xfade=transition=fade:duration=0.400:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "pip install readme2demo",
+    "style": "tech",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=pip install readme2demo:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.250,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=pip install readme2demo:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.400:offset=1.600[x1];[x1][v2]xfade=transition=fade:duration=0.400:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "é界: it's 50% [x]\\x",
+    "style": "tech",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=é界\\\\: it\\\\\\'s 50% \\[x\\]\\\\\\\\x:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.250,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=é界\\\\: it\\\\\\'s 50% \\[x\\]\\\\\\\\x:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.400:offset=1.600[x1];[x1][v2]xfade=transition=fade:duration=0.400:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "r2d\nVerified",
+    "style": "tech",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=r2d:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2-38,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2+38,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.250,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=r2d:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2-38,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2+38,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.400:offset=1.600[x1];[x1][v2]xfade=transition=fade:duration=0.400:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "\nVerified\n",
+    "style": "tech",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2-76,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2+76,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.250,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2-76,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2+76,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.400:offset=1.600[x1];[x1][v2]xfade=transition=fade:duration=0.400:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxx",
+    "style": "tech",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=xxxxxxxxxxxxxxxxxxxxxxxx:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.250,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=xxxxxxxxxxxxxxxxxxxxxxxx:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.400:offset=1.600[x1];[x1][v2]xfade=transition=fade:duration=0.400:offset=2.800[x2];[x2]null[vout]"
+  },
+  {
+    "text": "Verified",
+    "style": "energetic",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.600,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=wipeleft:duration=0.200:offset=1.800[x1];[x1][v2]xfade=transition=wipeleft:duration=0.200:offset=2.850[x2];[x2]null[vout]"
+  },
+  {
+    "text": "pip install readme2demo",
+    "style": "energetic",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=pip install readme2demo:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.600,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=pip install readme2demo:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=wipeleft:duration=0.200:offset=1.800[x1];[x1][v2]xfade=transition=wipeleft:duration=0.200:offset=2.850[x2];[x2]null[vout]"
+  },
+  {
+    "text": "é界: it's 50% [x]\\x",
+    "style": "energetic",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=é界\\\\: it\\\\\\'s 50% \\[x\\]\\\\\\\\x:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.600,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=é界\\\\: it\\\\\\'s 50% \\[x\\]\\\\\\\\x:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=wipeleft:duration=0.200:offset=1.800[x1];[x1][v2]xfade=transition=wipeleft:duration=0.200:offset=2.850[x2];[x2]null[vout]"
+  },
+  {
+    "text": "r2d\nVerified",
+    "style": "energetic",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=r2d:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2-42,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2+42,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.600,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=r2d:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2-42,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2+42,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=wipeleft:duration=0.200:offset=1.800[x1];[x1][v2]xfade=transition=wipeleft:duration=0.200:offset=2.850[x2];[x2]null[vout]"
+  },
+  {
+    "text": "\nVerified\n",
+    "style": "energetic",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2-84,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2,drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2+84,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.600,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2-84,drawtext=text=Verified:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2,drawtext=text=:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2+84,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=wipeleft:duration=0.200:offset=1.800[x1];[x1][v2]xfade=transition=wipeleft:duration=0.200:offset=2.850[x2];[x2]null[vout]"
+  },
+  {
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxx",
+    "style": "energetic",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=xxxxxxxxxxxxxxxxxxxxxxxx:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.600,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=xxxxxxxxxxxxxxxxxxxxxxxx:expansion=none:fontcolor=#7C6BF2:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=wipeleft:duration=0.200:offset=1.800[x1];[x1][v2]xfade=transition=wipeleft:duration=0.200:offset=2.850[x2];[x2]null[vout]"
+  },
+  {
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "style": "tech",
+    "graph": "[0:v]split=1[seg0];[1:v]drawtext=text=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v0];[seg0]trim=start=0.000:end=2.000,setpts=(PTS-STARTPTS)/1.250,scale=1200:700:force_original_aspect_ratio=decrease,pad=1200:700:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v1];[2:v]drawtext=text=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:expansion=none:fontcolor=#7C6BF2:fontsize=54:x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,format=yuv420p[v2];[v0][v1]xfade=transition=fade:duration=0.400:offset=1.600[x1];[x1][v2]xfade=transition=fade:duration=0.400:offset=2.800[x2];[x2]null[vout]"
+  }
+]

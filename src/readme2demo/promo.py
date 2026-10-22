@@ -43,10 +43,11 @@ Grounding (the one non-negotiable invariant), enforced structurally:
   an un-checked ``NaN`` would slide through the bounds check AND turn the
   duration gate into a no-op.
 * **At least one ``demo_segment``** per script, or the cut is refused.
-* **Card and caption text is passed through verbatim** from the script. Every
-  string that reaches the filtergraph goes through ``brand.title_card_drawtext``
+* **Card and caption wording is preserved** from the script. Cards wrap to the
+  canvas margins and reduce their fontsize when explicit lines fill the height.
+  Every string reaches the filtergraph through ``brand.title_card_drawtext``
   (and therefore ``brand.escape_drawtext``) — escaping is never reimplemented
-  here, and text is never rewritten. This module has no LLM in it and never
+  here, and only line breaks are inserted. This module has no LLM in it and never
   synthesizes command text.
 
 Nothing here touches the four protected artifacts (``tutorial.md``,
@@ -79,6 +80,7 @@ import posixpath
 import re
 import shutil
 import subprocess
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -118,6 +120,11 @@ OUT_LABEL = "vout"
 CANVAS_W = 1200
 CANVAS_H = 700
 FPS = 24
+
+#: Shared card geometry, also available to the script validator via this module.
+CARD_MARGIN = 24
+CARD_TEXT_W = CANVAS_W - 2 * CARD_MARGIN
+CARD_TEXT_H = CANVAS_H - 2 * CARD_MARGIN
 
 #: Wall-clock limit for one compositing run (seconds). Generous for a 60s cut
 #: re-encoded at ``-preset veryfast``, but bounded: this is a best-effort extra.
@@ -531,18 +538,73 @@ def _container_logo_path(cfg: Config) -> Optional[str]:
 #: Vertical spacing between stacked card lines, as a multiple of the fontsize.
 _CARD_LINE_SPACING = 1.4
 
+# Real drawtext probes over ASCII, accents, Cyrillic, CJK and emoji in DejaVu
+# Sans/Serif/Mono at the style sizes fit these em bounds plus 10% and rounding.
+# shortcut: unmeasured font families can exceed these bounds; extend the corpus
+# when a brand font exceeds them. Builders deliberately do not resolve fonts.
+_CARD_WIDTH_SAFETY = 1.1
+_CARD_GLYPH_HEIGHT_EM = 2.0
+# Even a 120-character card made entirely of explicit lines fits at this floor
+# (four-pixel line steps); larger floors would lose accepted newline-heavy cards.
+CARD_MIN_FONTSIZE = 3
+
+
+def _card_char_width(char: str, fontsize: int) -> int:
+    """Conservative pixel advance, without resolving a host/container font."""
+    if char == "\t" or unicodedata.east_asian_width(char) in {"W", "F"}:
+        em = 2.0
+    elif char in "ijlrtfx.,:;!| ":
+        em = 0.6
+    elif char.isascii():
+        em = 1.0 if char in "MWmw@%&#=+<>^~" else 0.8
+    else:
+        em = 1.25
+    return math.ceil(fontsize * em * _CARD_WIDTH_SAFETY)
+
+
+def _wrap_card_lines(text: str, fontsize: int) -> list[str]:
+    """Insert width-bounded breaks, retaining spaces and explicit empty lines."""
+    lines = []
+    for paragraph in text.split("\n"):
+        if not paragraph:
+            lines.append("")
+        while paragraph:
+            width = 0
+            end = 0
+            for char in paragraph:
+                advance = _card_char_width(char, fontsize)
+                if width + advance > CARD_TEXT_W:
+                    break
+                width += advance
+                end += 1
+            # Prefer a word boundary; keep its space rather than trimming text.
+            if end < len(paragraph):
+                space = paragraph.rfind(" ", 0, end)
+                if space >= 0:
+                    end = space + 1
+            end = max(1, end)
+            lines.append(paragraph[:end])
+            paragraph = paragraph[end:]
+    return lines
+
 
 def _card_drawtexts(text: str, cfg: Config, *, fontsize: int) -> list[str]:
     """One ``drawtext`` fragment per line of a title/end card.
 
-    A card carries several lines in one ``text`` field (repo name, then the
-    "verified" line, then the install command), and drawtext draws one line per
-    filter, so the text is split on newlines and the lines are stacked around
-    the centre. The text of each line is handed to ``brand.title_card_drawtext``
-    verbatim — this function chooses geometry, never content.
+    Wrap using conservative font advances, then reduce the fontsize and re-wrap
+    until the stacked lines fit the vertical budget. Explicit newlines and
+    whitespace are retained. Each line still goes through the brand escaper;
+    Cards fitting these budgets keep their original fragments and geometry.
     """
-    lines = text.split("\n")
-    step = round(fontsize * _CARD_LINE_SPACING)
+    for size in range(fontsize, CARD_MIN_FONTSIZE - 1, -1):
+        lines = _wrap_card_lines(text, size)
+        step = round(size * _CARD_LINE_SPACING)
+        height = (len(lines) - 1) * step + math.ceil(size * _CARD_GLYPH_HEIGHT_EM)
+        if height <= CARD_TEXT_H:
+            fontsize = size
+            break
+    else:
+        raise PromoError("card text cannot fit the canvas at the minimum fontsize")
     fragments = []
     for k, line in enumerate(lines):
         offset = int(round((k - (len(lines) - 1) / 2) * step))
