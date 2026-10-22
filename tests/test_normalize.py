@@ -1049,6 +1049,76 @@ def test_regression_259_finish_action_success_from_real_trajectory(fixtures_dir:
     assert "Render markdown on the CLI" in log.entries[-1].output
 
 
+def test_regression_261_openhands_metadata_exit_codes_do_not_ground(
+    fixtures_dir: Path,
+):
+    """Regression (#261): real OpenHands 0.48 exit codes live in metadata.
+
+    Before the adapter read ``extras.metadata.exit_code``, failed fixture
+    commands were coerced to zero and entered the grounding candidate set.
+    """
+    from readme2demo.distill import is_grounded
+    from readme2demo.engines.openhands import OpenHandsEngine
+
+    log = OpenHandsEngine().parse_transcript(
+        fixtures_dir / "openhands_glow_trajectory.json"
+    )
+
+    assert [entry.exit_code for entry in log.entries] == [2, 0, -1, -1, 127, 0, 0]
+    failed = [log.entries[index] for index in (0, 2, 3, 4)]
+    assert all(entry not in log.successful_commands() for entry in failed)
+    # The failed `go build ./...` segment must not be accepted as grounded.
+    assert not is_grounded("go build ./...", log)
+    # A real zero remains a successful grounding candidate.
+    assert log.entries[1] in log.successful_commands()
+
+
+def test_regression_261_openhands_exit_code_fallbacks(tmp_path):
+    """Regression (#261): prefer metadata, tolerate the old path, and fail closed."""
+    from readme2demo.engines.openhands import OpenHandsEngine
+
+    events = [
+        {"action": "run", "args": {"command": "legacy-zero"}},
+        {"observation": "run", "content": "ok", "extras": {"exit_code": 0}},
+        {"action": "run", "args": {"command": "metadata-zero"}},
+        {
+            "observation": "run",
+            "content": "ok",
+            "extras": {"exit_code": 9, "metadata": {"exit_code": 0}},
+        },
+        {"action": "run", "args": {"command": "metadata-failed"}},
+        {
+            "observation": "run",
+            "content": "failed",
+            "extras": {"metadata": {"exit_code": 3}},
+        },
+        {"action": "run", "args": {"command": "legacy-failed"}},
+        {
+            "observation": "run",
+            "content": "failed",
+            "extras": {"exit_code": 5, "metadata": {"exit_code": "bad"}},
+        },
+        {"action": "run", "args": {"command": "missing"}},
+        {"observation": "run", "content": "unknown", "extras": {}},
+        {"action": "run", "args": {"command": "malformed"}},
+        {
+            "observation": "run",
+            "content": "unknown",
+            "extras": {"exit_code": "bad", "metadata": {"exit_code": "bad"}},
+        },
+    ]
+    path = tmp_path / "trajectory.json"
+    path.write_text(json.dumps(events), encoding="utf-8")
+
+    log = OpenHandsEngine().parse_transcript(path)
+
+    assert [entry.exit_code for entry in log.entries] == [0, 0, 3, 5, None, None]
+    assert [entry.cmd for entry in log.successful_commands()] == [
+        "legacy-zero",
+        "metadata-zero",
+    ]
+
+
 def test_regression_259_finish_action_marker_shapes(tmp_path):
     """Regression (#259): the finish text lands in a different field in almost
     every OpenHands/provider combination — on the event (`message`), in the
