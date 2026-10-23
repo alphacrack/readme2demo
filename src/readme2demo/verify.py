@@ -10,7 +10,11 @@ Nothing is published unverified; on failure the orchestrator feeds
 
 from __future__ import annotations
 
+import posixpath
+import re
+import shlex
 from pathlib import Path
+from typing import Optional
 
 from readme2demo.config import Config
 from readme2demo.sandbox import Sandbox
@@ -134,6 +138,83 @@ def _export_worktree(sandbox: Sandbox, run_dir: Path) -> None:
         shutil.rmtree(dest, ignore_errors=True)
 
 
+def _cwd_segments(line: str) -> Optional[list[list[str]]]:
+    """Split simple chains while retaining quotes for cd's tilde handling.
+
+    This only tokenizes words, comments, && and ;. Unsupported syntax stops
+    analysis so a subshell or heredoc body cannot masquerade as a cd line.
+    """
+    tokens = re.finditer(
+        r"""\s+|(?P<comment>\#.*)|(?P<chain>&&|;)|"""
+        r"""(?P<word>(?:[^\s'"\\;&|()<>]+|'[^']*'|"(?:\\.|[^"\\])*"|\\.)+)"""
+        r"|(?P<unsupported>.)",
+        line,
+    )
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token.lastgroup == "comment":
+            break
+        if token.lastgroup == "unsupported":
+            return None
+        if token.lastgroup == "chain":
+            segments.append([])
+        elif token.lastgroup == "word":
+            segments[-1].append(token.group())
+    for segment in segments:
+        if not segment:
+            continue
+        # Do not mistake conditional/function bodies for executed commands,
+        # or guess the environment after assignments or shell builtins.
+        if segment[0] in {
+            "if", "then", "elif", "else", "fi", "for", "while", "until",
+            "do", "done", "case", "esac", "select", "function", "{", "}",
+        }:
+            return None
+        command = shlex.split(segment[0])[0]
+        if (
+            command in {"source", ".", "eval", "command", "builtin", "pushd", "popd"}
+            or re.match(r"\w+=", command)
+            or any(char in command for char in "$`")
+        ):
+            return None
+        if command in {"export", "unset", "readonly", "declare", "typeset"} and any(
+            shlex.split(word)[0].split("=")[0] in {"HOME", "CDPATH", "OLDPWD", "PWD"}
+            or any(char in word for char in "$`")
+            for word in segment[1:]
+        ):
+            return None
+        segment[0] = command
+    return segments
+
+
+def _cd_target(words: list[str], cwd: Optional[str], previous: Optional[str]) -> Optional[str]:
+    """Resolve a literal cd operand without evaluating shell expansions."""
+    if words[:1] == ["--"]:
+        words = words[1:]
+    if not words:
+        # images/base/Dockerfile creates demo's home, then sets WORKDIR /work.
+        return "/home/demo"
+    if len(words) != 1:
+        return None
+    raw = words[0]
+    # Be conservative even when these characters are quoted: shell expansion
+    # and filesystem-dependent globbing are outside this hints-only analysis.
+    if any(char in raw for char in "$`*?[]{}"):
+        return None
+    target = shlex.split(raw)[0]
+    if target == "-":
+        return previous
+    if target.startswith("-") or not target:
+        return None
+    if raw == "~" or raw.startswith("~/"):
+        target = "/home/demo" + target[1:]
+    elif raw.startswith("~"):
+        return None  # another user's home is unknown
+    if posixpath.isabs(target):
+        return posixpath.normpath(target)
+    return posixpath.normpath(posixpath.join(cwd, target)) if cwd is not None else None
+
+
 def cwd_hints(script_text: str) -> list[str]:
     """Static cwd analysis of commands.sh for the distiller feedback loop.
 
@@ -143,31 +224,34 @@ def cwd_hints(script_text: str) -> list[str]:
     intend (tfdrift regression: ``cd /tmp`` for a download, then
     ``pip install -e .`` editable-installed /tmp instead of the repo).
     Hints only — precision for the retry prompt, never a hard gate.
-    """
-    import re as _re
 
-    rel_re = _re.compile(r"(^|\s)(\./|\-e \.($|\s)|\.($|\s))")
-    chain_split = _re.compile(r"\s*(?:&&|;)\s*")
+    Tracks literal cd operands in simple &&/; chains, assuming they succeed.
+    Unknown targets suppress hints until a known directory is restored;
+    unsupported shell syntax stops analysis. No commands are executed.
+    """
+    rel_re = re.compile(r"(^|\s)(\./|\-e \.($|\s)|\.($|\s))")
     hints: list[str] = []
-    cwd = "/work"
+    cwd: Optional[str] = "/work"
+    previous: Optional[str] = None
     for raw in script_text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
+        segments = _cwd_segments(line)
+        if segments is None:
+            break
+        cd_segments = [seg for seg in segments if seg[:1] == ["cd"]]
         # A relative path is only suspicious when the cwd has drifted away
         # from the repo root AND the line doesn't set its own directory.
-        if cwd != "/work" and "cd " not in line and rel_re.search(line):
+        if cwd not in (None, "/work") and not cd_segments and rel_re.search(line):
             hints.append(
                 f"`{line[:90]}` uses a relative path while the working "
                 f"directory is `{cwd}` — is that the intended directory? "
                 "(cd persists across lines)"
             )
         # Track cd through every chain segment of the line.
-        for seg in chain_split.split(line):
-            seg = seg.strip()
-            if seg.startswith("cd ") or seg == "cd":
-                target = seg[2:].strip().strip("'\"") or "~"
-                cwd = target if target.startswith("/") else f"{cwd}/{target}"
+        for seg in cd_segments:
+            cwd, previous = _cd_target(seg[1:], cwd, previous), cwd
     return hints
 
 

@@ -16,9 +16,10 @@ import pytest
 import readme2demo.sandbox as sandbox_mod
 import readme2demo.verify as verify_mod
 from readme2demo.config import Config
+from readme2demo.distill import write_commands_sh
 from readme2demo.sandbox import ExecResult, SandboxError
-from readme2demo.types import Plan, SuccessCriteria
-from readme2demo.verify import _export_worktree, run_verify, verify_feedback
+from readme2demo.types import DistillOutput, Plan, SuccessCriteria, TutorialOutline
+from readme2demo.verify import _export_worktree, cwd_hints, run_verify, verify_feedback
 
 MARKER = "R2D_VERIFY_OK"
 
@@ -349,10 +350,124 @@ class TestExportWorktree:
         assert not (tmp_run_dir / "worktree").exists()
 
 
+# --- cwd_hints ----------------------------------------------------------------
+
+
+class TestCwdHints:
+    @pytest.mark.parametrize(
+        ("commands", "expected_cwd"),
+        [
+            ("cd ..", "/"),
+            ("cd ./pkg/../..", "/"),
+            ("cd /tmp/cache/.././", "/tmp"),
+            ("cd /work/pkg\ncd ..", None),
+            ("cd /tmp\ncd .", "/tmp"),
+            ("cd /tmp\ncd -", None),
+            ("cd /tmp\ncd -\ncd -", "/tmp"),
+            ("cd /tmp\ncd '-'\ncd \"-\"", "/tmp"),
+            ("cd", "/home/demo"),
+            ("cd ~", "/home/demo"),
+            ("cd ~/pkg/..", "/home/demo"),
+            ("cd '~'", "/work/~"),
+            ('cd "~/pkg"', "/work/~/pkg"),
+            (r"cd \~", "/work/~"),
+            ("cd 'a b/../c d'", "/work/c d"),
+            (r"cd a\ b/../c\ d", "/work/c d"),
+            ('cd "a; cd /tmp && b"', "/work/a; cd /tmp && b"),
+            ("cd /tmp; cd cache && cd ..", "/tmp"),
+            ("cd /tmp\n\n# cd /elsewhere\ncd . # stay here", "/tmp"),
+            ("cd\t/tmp", "/tmp"),
+            ("cd -- /tmp", "/tmp"),
+            ('cd /tmp\n"cd" /work', None),
+            ("cd -", None),
+            ('cd /tmp\ncd "$DEST"', None),
+            ("cd /tmp\ncd ~/projects/*", None),
+            ("cd /tmp\ncd ~someone", None),
+            ("cd /tmp\ncd -P .", None),
+            ("cd /tmp\ncd one two", None),
+            ('cd "$DEST"\ncd relative', None),
+            ('cd "$DEST"\ncd /tmp', "/tmp"),
+            ('cd /tmp\ncd "$DEST"\ncd -', "/tmp"),
+        ],
+    )
+    def test_issue_96_normalizes_cd_hints(
+        self, commands: str, expected_cwd: Optional[str]
+    ) -> None:
+        """Regression (#96): retry hints must not invent /work/.., /tmp/- or /work/~."""
+        hints = cwd_hints(commands + "\npip install -e .\n")
+        if expected_cwd is None:
+            assert hints == []
+        else:
+            assert hints == [
+                "`pip install -e .` uses a relative path while the working "
+                f"directory is `{expected_cwd}` — is that the intended directory? "
+                "(cd persists across lines)"
+            ]
+
+    @pytest.mark.parametrize(
+        "commands",
+        [
+            'cd "unterminated',
+            "cd $(pwd)",
+            "cd /tmp || cd /elsewhere",
+            "(cd /tmp)",
+            "cat <<'EOF'\ncd /tmp\nEOF",
+            "if false; then\ncd /tmp\nfi",
+            "while false; do\ncd /tmp\ndone",
+            "function f\n{\ncd /tmp\n}",
+            "HOME=/elsewhere\ncd",
+            "export HOME=/elsewhere\ncd",
+            "declare HOME=/elsewhere\ncd",
+            "typeset HOME=/elsewhere\ncd",
+            "cd /tmp\nsource setup.sh",
+            "cd /tmp\nbuiltin cd /work",
+        ],
+    )
+    def test_issue_96_unsupported_syntax_does_not_invent_a_cwd(self, commands: str) -> None:
+        """Regression (#96): hints cannot evaluate expansions or multiline shell bodies."""
+        assert cwd_hints(commands + "\n./tool\n") == []
+
+    def test_issue_96_preserves_same_line_cd_and_relative_command_detection(self) -> None:
+        """Regression (#96): normalization keeps the existing tfdrift hint contract."""
+        script = "cd /tmp\n./tool\npip install -e .\ncp . /out\necho ok\n"
+        assert len(cwd_hints(script)) == 3
+        assert cwd_hints("cd /tmp\ncd /work && pip install -e .\n") == []
+
+
 # --- verify_feedback (cwd_hints integration) ------------------------------------
 
 
 class TestVerifyFeedback:
+    @pytest.mark.parametrize(
+        ("commands", "expected_cwd"),
+        [("cd ..", "/"), ("cd", "/home/demo"), ("cd /tmp\ncd -", None)],
+    )
+    def test_issue_96_feedback_uses_normalized_cwd(
+        self, tmp_run_dir: Path, commands: str, expected_cwd: Optional[str]
+    ) -> None:
+        """Regression (#96): real feedback files carry corrected paths and the failure log."""
+        log = "ERROR: project not found\n"
+        (tmp_run_dir / "verify.log").write_text(log, encoding="utf-8")
+        out = DistillOutput(
+            commands=[commands, "pip install -e ."],
+            tape=[],
+            outline=TutorialOutline(title="Cwd regression", intro=""),
+        )
+        script_path = write_commands_sh(out, tmp_run_dir, _plan(), "https://example.com/repo")
+        script = script_path.read_text(encoding="utf-8")
+
+        feedback = verify_feedback(tmp_run_dir)
+
+        assert feedback.startswith("commands.sh FAILED when replayed in a fresh clean container")
+        assert log in feedback
+        if expected_cwd is None:
+            assert "Working-directory analysis" not in feedback
+        else:
+            assert f"directory is `{expected_cwd}`" in feedback
+            assert "Remember: cd persists across lines; the repo is at /work." in feedback
+        assert (tmp_run_dir / "commands.sh").read_text(encoding="utf-8") == script
+        assert (tmp_run_dir / "verify.log").read_text(encoding="utf-8") == log
+
     def test_empty_without_log(self, tmp_run_dir: Path) -> None:
         assert verify_feedback(tmp_run_dir) == ""
 
