@@ -336,6 +336,8 @@ def test_wrap_trims_only_wrapped_breaks(tmp_path: Path) -> None:
     assert all(chunk and not chunk.endswith(" ") for chunk in chunks[:-2]), chunks
     assert chunks[-2].endswith("words ")
     assert chunks[-1] == "readable words "
+    # Breaks fall between words: every chunk holds only whole words of the text.
+    assert all(set(chunk.split()) <= set(text.split()) for chunk in chunks), chunks
     _assert_preserved(filters, text)
     # A wrapped break followed only by spaces still trims the wrapped line.
     spaced = "W" * 18 + " " * 5
