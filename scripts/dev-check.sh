@@ -19,6 +19,7 @@ command -v mypy >/dev/null 2>&1 || {
 echo "==> mypy src/readme2demo"
 mypy src/readme2demo
 
+# Promo geometry tests skip unless ffmpeg and fonts-dejavu-core are installed; CI installs them on the 3.12 leg.
 echo "==> python -m pytest tests/ -q --cov=readme2demo --cov-report=term --cov-fail-under=80"
 python -m pytest tests/ -q --cov=readme2demo --cov-report=term --cov-fail-under=80
 
