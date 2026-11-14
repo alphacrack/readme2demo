@@ -101,9 +101,15 @@ def _assert_geometry(filters: list[str]) -> list[tuple[float, float, float, floa
         ],
         capture_output=True, text=True, timeout=10, check=True,
     )
-    values = re.findall(r"^(-?[0-9]+\.[0-9]+)$", result.stderr, re.MULTILINE)
+    # ffmpeg 8.0 prefixes each printed value with "[Eval @ 0x...] " and prints the
+    # whole pass twice; ffmpeg 7.1 prints bare values once.
+    values = re.findall(
+        r"^(?:\[Eval @ 0x[0-9a-f]+\] )?(-?[0-9]+\.[0-9]+)$", result.stderr, re.MULTILINE
+    )
     # drawtext evaluates x twice, producing x/w/h/y/x for each filter.
-    assert len(values) == len(filters) * 5, result.stderr
+    expected = len(filters) * 5
+    assert len(values) in (expected, 2 * expected), result.stderr
+    assert values[expected:] in ([], values[:expected]), result.stderr
     geometry = []
     for i, fragment in enumerate(filters):
         x, width, height, y_pos = map(float, values[i * 5:i * 5 + 4])
