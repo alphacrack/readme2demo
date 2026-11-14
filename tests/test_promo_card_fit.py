@@ -101,8 +101,8 @@ def _assert_geometry(filters: list[str]) -> list[tuple[float, float, float, floa
         ],
         capture_output=True, text=True, timeout=10, check=True,
     )
-    # ffmpeg 8.0 prefixes each printed value with "[Eval @ 0x...] " and prints the
-    # whole pass twice; ffmpeg 7.1 prints bare values once.
+    # ffmpeg 8 prefixes each printed value with "[Eval @ 0x...] ", and 8.0.1 was seen
+    # printing the whole pass twice; ffmpeg 7.1 prints bare values once.
     values = re.findall(
         r"^(?:\[Eval @ 0x[0-9a-f]+\] )?(-?[0-9]+\.[0-9]+)$", result.stderr, re.MULTILINE
     )
