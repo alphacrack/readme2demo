@@ -47,7 +47,8 @@ Grounding (the one non-negotiable invariant), enforced structurally:
   canvas margins and reduce their fontsize when explicit lines fill the height.
   Every string reaches the filtergraph through ``brand.title_card_drawtext``
   (and therefore ``brand.escape_drawtext``) — escaping is never reimplemented
-  here, and only line breaks are inserted. This module has no LLM in it and never
+  here. Wrapping inserts line breaks and drops only the trailing spaces of a
+  wrapped line. This module has no LLM in it and never
   synthesizes command text.
 
 Nothing here touches the four protected artifacts (``tutorial.md``,
@@ -544,17 +545,23 @@ _CARD_LINE_SPACING = 1.4
 # when a brand font exceeds them. Builders deliberately do not resolve fonts.
 _CARD_WIDTH_SAFETY = 1.1
 _CARD_GLYPH_HEIGHT_EM = 2.0
-#: Font floor whose stacked-line capacity also bounds the validator's budget.
-CARD_MIN_FONTSIZE = 3
+#: Smallest legible card fontsize; the validator rejects cards that do not fit at it.
+CARD_MIN_FONTSIZE = 24
 #: drawtext's default tab stop, measured in space advances.
 _CARD_TAB_SPACES = 4
 
 
-def card_text_capacity() -> int:
-    """Maximum stacked lines supported by the usable height at the font floor."""
-    step = round(CARD_MIN_FONTSIZE * _CARD_LINE_SPACING)
-    glyph_height = math.ceil(CARD_MIN_FONTSIZE * _CARD_GLYPH_HEIGHT_EM)
-    return max(0, 1 + (CARD_TEXT_H - glyph_height) // step)
+def _fitted_card_lines(text: str, fontsize: int) -> Optional[list[str]]:
+    """Wrapped card lines at ``fontsize`` if they fit the usable height, else None."""
+    lines = _wrap_card_lines(text, fontsize)
+    step = round(fontsize * _CARD_LINE_SPACING)
+    height = (len(lines) - 1) * step + math.ceil(fontsize * _CARD_GLYPH_HEIGHT_EM)
+    return lines if height <= CARD_TEXT_H else None
+
+
+def card_text_fits(text: str) -> bool:
+    """Whether a card's text fits the canvas at :data:`CARD_MIN_FONTSIZE`."""
+    return _fitted_card_lines(text, CARD_MIN_FONTSIZE) is not None
 
 
 def _card_char_width(char: str, fontsize: int) -> int:
@@ -574,7 +581,11 @@ def _card_char_width(char: str, fontsize: int) -> int:
 
 
 def _wrap_card_lines(text: str, fontsize: int) -> list[str]:
-    """Insert width-bounded breaks, retaining spaces and explicit empty lines."""
+    """Insert width-bounded breaks, retaining explicit empty lines.
+
+    A line ended by a wrapped break drops its trailing spaces so it centres on
+    its text; a line ended by an explicit newline or the text's end keeps them.
+    """
     lines = []
     for paragraph in text.split("\n"):
         if not paragraph:
@@ -588,14 +599,14 @@ def _wrap_card_lines(text: str, fontsize: int) -> list[str]:
                     break
                 width += advance
                 end += 1
-            # Prefer a word boundary; keep its space rather than trimming text.
+            # Prefer a word boundary.
             if end < len(paragraph):
                 space = paragraph.rfind(" ", 0, end)
                 if space >= 0:
                     end = space + 1
             end = max(1, end)
-            lines.append(paragraph[:end])
-            paragraph = paragraph[end:]
+            line, paragraph = paragraph[:end], paragraph[end:]
+            lines.append(line.rstrip(" ") if paragraph else line)
     return lines
 
 
@@ -603,19 +614,20 @@ def _card_drawtexts(text: str, cfg: Config, *, fontsize: int) -> list[str]:
     """One ``drawtext`` fragment per line of a title/end card.
 
     Wrap using conservative font advances, then reduce the fontsize and re-wrap
-    until the stacked lines fit the vertical budget. Explicit newlines and
-    whitespace are retained. Each line still goes through the brand escaper;
+    until the stacked lines fit the vertical budget, no lower than
+    :data:`CARD_MIN_FONTSIZE`. Explicit newlines and whitespace are retained,
+    except the trailing spaces of wrapped lines. Each line still goes through
+    the brand escaper;
     Cards fitting these budgets keep their original fragments and geometry.
     """
     for size in range(fontsize, CARD_MIN_FONTSIZE - 1, -1):
-        lines = _wrap_card_lines(text, size)
-        step = round(size * _CARD_LINE_SPACING)
-        height = (len(lines) - 1) * step + math.ceil(size * _CARD_GLYPH_HEIGHT_EM)
-        if height <= CARD_TEXT_H:
-            fontsize = size
+        fitted = _fitted_card_lines(text, size)
+        if fitted is not None:
+            lines, fontsize = fitted, size
             break
     else:
         raise PromoError("card text cannot fit the canvas at the minimum fontsize")
+    step = round(fontsize * _CARD_LINE_SPACING)
     fragments = []
     for k, line in enumerate(lines):
         offset = int(round((k - (len(lines) - 1) / 2) * step))

@@ -92,9 +92,8 @@ DURATION_TOLERANCE_S = 0.5
 #: offset to 3 decimals, so an exact-boundary cut must not be a violation.
 BOUNDS_TOLERANCE_S = 0.05
 
-#: Raw card budget, including whitespace/newlines, capped by renderer capacity:
-#: a nonblank N-character card has at most N explicit/wrapped lines.
-MAX_CARD_TEXT_CHARS = min(120, promo.card_text_capacity())
+#: Raw card budget in characters, counting whitespace and newlines.
+MAX_CARD_TEXT_CHARS = 120
 
 
 # -- card text: which spans are COMMANDS (and therefore need grounding) -------
@@ -640,7 +639,8 @@ def _card_violations(
     """Structural + card-text checks for a ``title_card`` / ``end_card`` scene.
 
     The structural half requires nonblank text within the raw character budget
-    (including newlines) and no video offsets.
+    (including newlines) whose lines fit the card at the renderer's minimum
+    legible fontsize, and no video offsets.
     The content half exists because ``prompts/promo_script.md`` asks the end card
     to carry the install/success command verbatim: a prompt rule with no parser
     let an invented ``pip install …`` through with zero violations, straight into
@@ -656,6 +656,12 @@ def _card_violations(
         out.append(
             f"{tag}: card text is {len(raw_text)} characters — keep it at most "
             f"{MAX_CARD_TEXT_CHARS} so it is readable on screen"
+        )
+    elif not promo.card_text_fits(raw_text):
+        out.append(
+            f"{tag}: card text needs more lines than fit on screen at the minimum "
+            f"legible fontsize ({promo.CARD_MIN_FONTSIZE}px) — shorten it or use "
+            "fewer line breaks"
         )
     allowed = f" ({success_cmd!r})" if success_cmd else ""
     for candidate in command_candidates(text):
