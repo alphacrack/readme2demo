@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
+import math
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -56,19 +55,28 @@ def _card_filters(graph: str, input_index: int) -> list[str]:
 
 
 def _assert_preserved(filters: list[str], text: str) -> None:
-    # Match authored newline boundaries while permitting only inserted breaks.
-    chunks = iter(f.removeprefix("drawtext=text=").split(":expansion=none", 1)[0]
-                  for f in filters)
+    # Authored newlines end chunks exactly; wrapped joins may drop only spaces.
+    chunks = [f.removeprefix("drawtext=text=").split(":expansion=none", 1)[0]
+              for f in filters]
+    i = 0
     for paragraph in text.split("\n"):
-        expected = escape_drawtext(paragraph)
-        actual = next(chunks, None)
-        assert actual is not None, paragraph
-        while len(actual) < len(expected):
-            part = next(chunks, None)
-            assert part is not None, paragraph
-            actual += part
-        assert actual == expected
-    assert next(chunks, None) is None
+        rest = escape_drawtext(paragraph)
+        while True:
+            assert i < len(chunks), (paragraph, rest)
+            chunk = chunks[i]
+            i += 1
+            assert rest.startswith(chunk), (chunk, rest)
+            rest = rest[len(chunk):]
+            if not rest:
+                break
+            following = chunks[i] if i < len(chunks) else None
+            assert following is not None, (paragraph, rest)
+            # Skip the spaces this wrapped join dropped; an empty chunk drops none.
+            spaces = len(rest) - len(rest.lstrip(" "))
+            skips = [k for k in range(spaces + 1) if rest[k:].startswith(following)]
+            assert skips, (chunk, following, rest)
+            rest = rest[0 if following == "" else max(skips):]
+    assert i == len(chunks), chunks[i:]
 
 
 def _assert_geometry(filters: list[str]) -> list[tuple[float, float, float, float]]:
@@ -160,17 +168,71 @@ def test_wrapped_card_axis_product(
     "text", ["W\n" * 59 + "WW", "W" + "\n" * 118 + "W", "W" + "\n" * 119],
     ids=["dense-text", "empty-lines", "trailing-empty-lines"],
 )
-def test_dense_newlines_reduce_fontsize(text: str, style: str, tmp_path: Path) -> None:
-    """Regression: dense explicit lines shrink and remain vertically inside the frame."""
+def test_illegible_dense_cards_are_rejected(text: str, style: str) -> None:
+    """Regression: cards needing more lines than fit at the legible floor are refused."""
+    assert _violations(text)
+    with pytest.raises(promo.PromoError, match="fit"):
+        promo._card_drawtexts(text, Config(), fontsize=promo.STYLES[style].card_fontsize)
+
+
+@pytest.mark.parametrize("style", ["minimal", "tech", "energetic"])
+@pytest.mark.parametrize("lines", [12, 18])
+def test_dense_newlines_shrink_to_a_legible_fontsize(
+    lines: int, style: str, tmp_path: Path,
+) -> None:
+    """Regression: dense explicit lines shrink, never below the floor, inside the frame."""
+    text = "\n".join(["W"] * lines)
     assert _violations(text) == []
     filters = _card_filters(_graph(text, style, tmp_path, Config()), 1)
     _assert_preserved(filters, text)
     sizes = [int(re.search(r":fontsize=(\d+):", f)[1]) for f in filters]
     assert max(sizes) < promo.STYLES[style].card_fontsize
+    assert min(sizes) >= promo.CARD_MIN_FONTSIZE
     _assert_geometry(filters)
 
 
-@pytest.mark.parametrize("text", [" " + "W" * 119, "W" + "\n" * 119])
+def _fit_corpus() -> list[str]:
+    explicit = ["\n".join(["W"] * n) for n in range(1, 26)]
+    runs = ["W" * 40, "W" * 80, "W" * 120, "界" * 60, "界" * 120]
+    words = [("readable words " * 8)[:n] for n in (30, 75, 120)]
+    wide = [("Ｗ界😀" * 40)[:n] for n in (40, 120)]
+    # Two wrapped lines, then explicit lines, landing on either side of the floor.
+    mixed = [head + "\n" * n + "W" for head in ("W" * 43, "界" * 22) for n in (15, 16, 17)]
+    mixed += ["\n".join(["W" * 50] * 2), "W" * 43 + "\n" + "readable words " * 5]
+    return explicit + runs + words + wide + mixed
+
+
+@pytest.mark.parametrize("style", ["minimal", "tech", "energetic"])
+def test_validator_fit_verdict_matches_renderer_refusal(style: str) -> None:
+    """Regression: the validator rejects exactly the cards the renderer cannot fit."""
+    floor = promo.CARD_MIN_FONTSIZE
+    max_lines = 1 + (promo.CARD_TEXT_H - math.ceil(floor * promo._CARD_GLYPH_HEIGHT_EM)) // round(
+        floor * promo._CARD_LINE_SPACING
+    )
+    assert (floor, max_lines) == (24, 18)
+    boundary = {"\n".join(["W"] * max_lines): True, "\n".join(["W"] * (max_lines + 1)): False}
+    verdicts = set()
+    for text in _fit_corpus() + list(boundary):
+        # Within the raw budget and nonblank, so any violation is the fit check.
+        assert text.strip() and len(text) <= promo_script.MAX_CARD_TEXT_CHARS, text
+        accepted = _violations(text) == []
+        try:
+            filters = promo._card_drawtexts(
+                text, Config(), fontsize=promo.STYLES[style].card_fontsize
+            )
+        except promo.PromoError:
+            rendered = False
+        else:
+            rendered = True
+            sizes = [int(re.search(r":fontsize=(\d+):", f)[1]) for f in filters]
+            assert min(sizes) >= floor, (text, sizes)
+        assert accepted is rendered, (text, accepted)
+        assert boundary.get(text, accepted) is accepted, text
+        verdicts.add(accepted)
+    assert verdicts == {True, False}
+
+
+@pytest.mark.parametrize("text", [" " + "W" * 119])
 def test_raw_card_budget_includes_whitespace(text: str) -> None:
     """Regression: padding cannot admit an unbounded number of explicit lines."""
     assert _violations(text) == []
@@ -196,32 +258,6 @@ def test_tab_stops_fit_canvas_across_phases(
         _assert_preserved(filters, text)
         all_filters.extend(filters)
     _assert_geometry(all_filters)
-
-
-@pytest.mark.parametrize("style", ["minimal", "tech", "energetic"])
-def test_validator_budget_tracks_renderer_capacity(
-    style: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Regression: changing usable height changes the accepted and rendered line budget."""
-    monkeypatch.setattr(promo, "CANVAS_H", 68)
-    monkeypatch.setattr(promo, "CARD_TEXT_H", 20)
-    # At the font floor, four lines occupy 18px; five would need 22px.
-    spec = importlib.util.spec_from_file_location(
-        "readme2demo._promo_script_capacity_test", promo_script.__file__,
-    )
-    assert spec is not None and spec.loader is not None
-    validator = importlib.util.module_from_spec(spec)
-    monkeypatch.setitem(sys.modules, spec.name, validator)
-    spec.loader.exec_module(validator)
-    text = "W\n\n\n"
-    log = CommandLog(engine="claude-code", result=AgentResult(outcome="success"))
-    assert validator._card_violations("title", _script(text).scenes[0], set(), log, "") == []
-    assert validator._card_violations(
-        "title", _script(text + "\n").scenes[0], set(), log, "",
-    )
-    filters = _card_filters(_graph(text, style, tmp_path, Config()), 1)
-    _assert_preserved(filters, text)
-    _assert_geometry(filters)
 
 
 @pytest.mark.parametrize(
@@ -279,16 +315,20 @@ def test_width_model_covers_glyph_alphabets(
         )
 
 
-def test_wrap_prefers_word_boundaries_without_trimming(tmp_path: Path) -> None:
-    """Regression: wrapping retains spaces and breaks between words when possible."""
-    text = "readable words " * 8
+def test_wrap_trims_only_wrapped_breaks(tmp_path: Path) -> None:
+    """Regression: wrapped lines drop trailing spaces; explicit and final lines keep them."""
+    text = "readable words " * 6 + "\n" + "readable words "
     filters = _card_filters(_graph(text, "tech", tmp_path, Config()), 1)
     chunks = [f.removeprefix("drawtext=text=").split(":expansion=none", 1)[0]
               for f in filters]
-    assert len(chunks) > 1
-    assert all(chunk.endswith(" ") for chunk in chunks)
+    # The last two chunks end the explicit line and the final paragraph.
+    assert len(chunks) >= 4
+    assert all(chunk and not chunk.endswith(" ") for chunk in chunks[:-2]), chunks
+    assert chunks[-2].endswith("words ")
+    assert chunks[-1] == "readable words "
     _assert_preserved(filters, text)
-    _assert_geometry(filters)
+    if shutil.which("ffmpeg") is not None:
+        _assert_geometry(filters)
 
 
 def test_unbounded_multiline_card_is_refused() -> None:
