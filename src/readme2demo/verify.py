@@ -25,6 +25,9 @@ _MARKER = "R2D_VERIFY_OK"
 # /work, which git refuses if anything (like the script itself) is already
 # there. /tmp keeps the clone target pristine.
 _SCRIPT_DST = "/tmp/commands.sh"
+# images/base/Dockerfile creates this home for USER demo; keep the contract
+# covered by test_issue_96_home_matches_base_image when the image user changes.
+_SANDBOX_HOME = "/home/demo"
 
 
 def run_verify(run_dir: Path, plan: Plan, cfg: Config) -> VerifyReport:
@@ -138,28 +141,56 @@ def _export_worktree(sandbox: Sandbox, run_dir: Path) -> None:
         shutil.rmtree(dest, ignore_errors=True)
 
 
-def _cwd_segments(line: str) -> Optional[list[list[str]]]:
+def _cwd_segments(line: str) -> Optional[tuple[list[list[str]], bool]]:
     """Split simple chains while retaining quotes for cd's tilde handling.
 
-    This only tokenizes words, comments, && and ;. Unsupported syntax stops
-    analysis so a subshell or heredoc body cannot masquerade as a cd line.
+    Pipes and redirects make a line opaque, but need not end later analysis.
+    Structural syntax still stops it so a shell body cannot masquerade as cd.
     """
     tokens = re.finditer(
-        r"""\s+|(?P<comment>\#.*)|(?P<chain>&&|;)|"""
+        r"""\s+|(?P<comment>\#.*)|(?P<heredoc><<)|(?P<chain>&&|;)|"""
+        r"(?P<pipe>\|[|&]?)|(?P<redirect><>|>\||[<>]&|&>>?|>>?|<)|"
         r"""(?P<word>(?:[^\s'"\\;&|()<>]+|'[^']*'|"(?:\\.|[^"\\])*"|\\.)+)"""
         r"|(?P<unsupported>.)",
         line,
     )
     segments: list[list[str]] = [[]]
+    opaque = False
+    redirect_target = False
+    segment_has_redirect = False
+    trailing_semicolon = False
+    word_end = -1
     for token in tokens:
         if token.lastgroup == "comment":
             break
-        if token.lastgroup == "unsupported":
+        if token.lastgroup in {"unsupported", "heredoc"}:
             return None
-        if token.lastgroup == "chain":
+        if token.lastgroup in {"chain", "pipe", "redirect"} and redirect_target:
+            return None
+        if token.lastgroup in {"chain", "pipe"}:
+            if not segments[-1] and not segment_has_redirect:
+                return None
             segments.append([])
+            segment_has_redirect = False
+            opaque |= token.lastgroup == "pipe"
+            trailing_semicolon = token.group() == ";"
+        elif token.lastgroup == "redirect":
+            opaque = redirect_target = True
+            trailing_semicolon = False
+            if segments[-1] and word_end == token.start() and segments[-1][-1].isdigit():
+                segments[-1].pop()  # adjacent file descriptor, e.g. 2>log
         elif token.lastgroup == "word":
-            segments[-1].append(token.group())
+            trailing_semicolon = False
+            if redirect_target:
+                redirect_target = False  # file/descriptor operand, not a command
+                segment_has_redirect = True
+            else:
+                segments[-1].append(token.group())
+                word_end = token.end()
+    if redirect_target or (
+        not segments[-1] and not segment_has_redirect and not trailing_semicolon and len(segments) > 1
+    ):
+        return None  # a trailing pipe/redirect may continue on the next line
     for segment in segments:
         if not segment:
             continue
@@ -184,7 +215,7 @@ def _cwd_segments(line: str) -> Optional[list[list[str]]]:
         ):
             return None
         segment[0] = command
-    return segments
+    return segments, opaque
 
 
 def _cd_target(words: list[str], cwd: Optional[str], previous: Optional[str]) -> Optional[str]:
@@ -192,8 +223,7 @@ def _cd_target(words: list[str], cwd: Optional[str], previous: Optional[str]) ->
     if words[:1] == ["--"]:
         words = words[1:]
     if not words:
-        # images/base/Dockerfile creates demo's home, then sets WORKDIR /work.
-        return "/home/demo"
+        return _SANDBOX_HOME
     if len(words) != 1:
         return None
     raw = words[0]
@@ -207,7 +237,7 @@ def _cd_target(words: list[str], cwd: Optional[str], previous: Optional[str]) ->
     if target.startswith("-") or not target:
         return None
     if raw == "~" or raw.startswith("~/"):
-        target = "/home/demo" + target[1:]
+        target = _SANDBOX_HOME + target[1:]
     elif raw.startswith("~"):
         return None  # another user's home is unknown
     if posixpath.isabs(target):
@@ -227,7 +257,8 @@ def cwd_hints(script_text: str) -> list[str]:
 
     Tracks literal cd operands in simple &&/; chains, assuming they succeed.
     Unknown targets suppress hints until a known directory is restored;
-    unsupported shell syntax stops analysis. No commands are executed.
+    ordinary pipes/redirects preserve cwd, but an obscured cd makes it unknown.
+    Unsupported structural syntax stops analysis. No commands are executed.
     """
     rel_re = re.compile(r"(^|\s)(\./|\-e \.($|\s)|\.($|\s))")
     hints: list[str] = []
@@ -237,10 +268,16 @@ def cwd_hints(script_text: str) -> list[str]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        segments = _cwd_segments(line)
-        if segments is None:
+        parsed = _cwd_segments(line)
+        if parsed is None:
             break
+        segments, opaque = parsed
         cd_segments = [seg for seg in segments if seg[:1] == ["cd"]]
+        if opaque and cd_segments:
+            # Do not infer whether a piped/conditional/redirected cd ran in the
+            # current shell, or retain OLDPWD after an untracked directory change.
+            cwd = previous = None
+            continue
         # A relative path is only suspicious when the cwd has drifted away
         # from the repo root AND the line doesn't set its own directory.
         if cwd not in (None, "/work") and not cd_segments and rel_re.search(line):

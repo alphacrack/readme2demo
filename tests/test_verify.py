@@ -355,6 +355,91 @@ class TestExportWorktree:
 
 class TestCwdHints:
     @pytest.mark.parametrize(
+        "command",
+        [
+            "curl -sL URL | tar xz",
+            "curl -sL URL | tar xz; # download complete",
+            "echo ok > output.txt",
+            ">output.txt;",
+            "2>&1;",
+            ">output.txt && echo ok",
+            "echo ok; >output.txt",
+            "cat < input.txt",
+            "echo ok >> output.txt",
+            "curl -sL URL > archive.tar 2>&1",
+            "echo ok &> output.txt",
+            "echo ok >| output.txt",
+            "cat <> input.txt",
+            "curl -sL URL |& cat",
+            "2>errors.log curl -sL URL | tar xz",
+            "false || echo unavailable",
+            "echo 'cd /work' | cat",
+            "echo ok > cd",
+            "pip install -e . > install.log",
+            'echo "pipe | redirect >"',
+        ],
+    )
+    def test_issue_96_hints_survive_pipes_and_redirects(self, command: str) -> None:
+        """Regression (#96 review): a download must not hide a later editable install."""
+        hints = cwd_hints(f"cd /tmp\n{command}\npip install -e .\n")
+        assert hints[-1] == (
+            "`pip install -e .` uses a relative path while the working "
+            "directory is `/tmp` — is that the intended directory? "
+            "(cd persists across lines)"
+        )
+        # Ordinary IO must preserve OLDPWD as well as the current directory.
+        assert cwd_hints(f"cd /tmp\n{command}\ncd -\n./after-return\n") == hints[:-1]
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cd /work > output.txt",
+            "cd /work 2>&1",
+            "> output.txt cd /work",
+            '2>errors.log "cd" /work',
+            "echo ok | cd /work",
+            "cd /work | cat",
+            "false || cd /work",
+            "echo ok > output.txt; cd /work",
+        ],
+    )
+    def test_issue_96_obscured_cd_discards_stale_paths(self, command: str) -> None:
+        """Regression (#96 review): IO around cd must not preserve an invented cwd/OLDPWD."""
+        script = f"cd /old\ncd /tmp\n{command}\n./unknown\ncd -\n./still-unknown\n"
+        assert cwd_hints(script) == []
+        hints = cwd_hints(script + "cd /known\n./after-recovery\n")
+        assert len(hints) == 1
+        assert "`./after-recovery`" in hints[0]
+        assert "directory is `/known`" in hints[0]
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cat <<'EOF'\ncd /wrong\nEOF",
+            "curl URL |\ncd /wrong",
+            "curl URL &&\ncd /wrong",
+            'echo "unterminated\ncd /wrong',
+            "if false; then\ncd /wrong\nfi",
+            "source setup.sh > output.txt",
+            ">output.txt . setup.sh",
+            "eval setup > output.txt",
+            "export HOME=/wrong > output.txt",
+        ],
+    )
+    def test_issue_96_io_recovery_does_not_parse_shell_bodies(self, command: str) -> None:
+        """Regression (#96 review): an absolute cd inside unparsed shell text is not proof."""
+        assert cwd_hints(f"cd /tmp\n{command}\ncd /known\n./tool\n") == []
+
+    def test_issue_96_home_matches_base_image(self) -> None:
+        """Regression (#96 review): bare cd and tilde must match the base image's user home."""
+        dockerfile = (Path(__file__).resolve().parents[1] / "images/base/Dockerfile").read_text()
+        user = next(line.split()[1] for line in dockerfile.splitlines() if line.startswith("USER "))
+        useradd = next(line for line in dockerfile.splitlines() if "useradd " in line)
+        assert f"--create-home --shell /bin/bash {user}" in useradd
+        assert "--home-dir" not in useradd and "-d " not in useradd
+        assert verify_mod._SANDBOX_HOME == f"/home/{user}"
+
+    @pytest.mark.parametrize(
         ("commands", "expected_cwd"),
         [
             ("cd ..", "/"),
@@ -440,7 +525,14 @@ class TestCwdHints:
 class TestVerifyFeedback:
     @pytest.mark.parametrize(
         ("commands", "expected_cwd"),
-        [("cd ..", "/"), ("cd", "/home/demo"), ("cd /tmp\ncd -", None)],
+        [
+            ("cd ..", "/"),
+            ("cd", "/home/demo"),
+            ("cd /tmp\ncd -", None),
+            ("cd /tmp\ncurl -sL URL | tar xz", "/tmp"),
+            ("cd /tmp\ncurl -sL URL > archive.tar 2>&1", "/tmp"),
+            ("cd /tmp\ncd /work > log", None),
+        ],
     )
     def test_issue_96_feedback_uses_normalized_cwd(
         self, tmp_run_dir: Path, commands: str, expected_cwd: Optional[str]

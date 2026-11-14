@@ -40,3 +40,14 @@ def test_release_consistency() -> None:
     assert log_version == py_version, (
         f"CHANGELOG.md top heading is {log_version} but pyproject.toml has {py_version} — keep footer and heading in sync"
     )
+
+
+def test_dev_check_mirrors_ci_mypy_and_coverage_gate() -> None:
+    """Regression (#143): scripts/dev-check.sh must keep mypy + cov gate in lockstep with ci.yml."""
+    root = Path(__file__).resolve().parent.parent
+    ci = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    script = (root / "scripts/dev-check.sh").read_text(encoding="utf-8")
+    assert "mypy src/readme2demo" in ci
+    assert "mypy src/readme2demo" in script
+    assert "--cov-fail-under=80" in ci
+    assert "--cov-fail-under=80" in script
