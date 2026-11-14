@@ -43,10 +43,12 @@ Grounding (the one non-negotiable invariant), enforced structurally:
   an un-checked ``NaN`` would slide through the bounds check AND turn the
   duration gate into a no-op.
 * **At least one ``demo_segment``** per script, or the cut is refused.
-* **Card and caption text is passed through verbatim** from the script. Every
-  string that reaches the filtergraph goes through ``brand.title_card_drawtext``
+* **Card and caption wording is preserved** from the script. Cards wrap to the
+  canvas margins and reduce their fontsize when their lines fill the height.
+  Every string reaches the filtergraph through ``brand.title_card_drawtext``
   (and therefore ``brand.escape_drawtext``) — escaping is never reimplemented
-  here, and text is never rewritten. This module has no LLM in it and never
+  here. Wrapping inserts line breaks and drops only the trailing spaces of a
+  wrapped line. This module has no LLM in it and never
   synthesizes command text.
 
 Nothing here touches the four protected artifacts (``tutorial.md``,
@@ -79,6 +81,7 @@ import posixpath
 import re
 import shutil
 import subprocess
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -118,6 +121,11 @@ OUT_LABEL = "vout"
 CANVAS_W = 1200
 CANVAS_H = 700
 FPS = 24
+
+#: Shared card geometry, also available to the script validator via this module.
+CARD_MARGIN = 24
+CARD_TEXT_W = CANVAS_W - 2 * CARD_MARGIN
+CARD_TEXT_H = CANVAS_H - 2 * CARD_MARGIN
 
 #: Wall-clock limit for one compositing run (seconds). Generous for a 60s cut
 #: re-encoded at ``-preset veryfast``, but bounded: this is a best-effort extra.
@@ -531,17 +539,94 @@ def _container_logo_path(cfg: Config) -> Optional[str]:
 #: Vertical spacing between stacked card lines, as a multiple of the fontsize.
 _CARD_LINE_SPACING = 1.4
 
+# Real drawtext probes over ASCII, accents, Cyrillic, CJK and emoji in DejaVu
+# Sans/Serif/Mono at the style sizes fit these em bounds plus 10% and rounding.
+# shortcut: unmeasured font families can exceed these bounds; extend the corpus
+# when a brand font exceeds them. Builders deliberately do not resolve fonts.
+_CARD_WIDTH_SAFETY = 1.1
+_CARD_GLYPH_HEIGHT_EM = 2.0
+#: Smallest legible card fontsize; the validator rejects cards that do not fit at it.
+CARD_MIN_FONTSIZE = 24
+#: drawtext's default tab stop, measured in space advances.
+_CARD_TAB_SPACES = 4
+
+
+def _fitted_card_lines(text: str, fontsize: int) -> Optional[list[str]]:
+    """Wrapped card lines at ``fontsize`` if they fit the usable height, else None."""
+    lines = _wrap_card_lines(text, fontsize)
+    step = round(fontsize * _CARD_LINE_SPACING)
+    height = (len(lines) - 1) * step + math.ceil(fontsize * _CARD_GLYPH_HEIGHT_EM)
+    return lines if height <= CARD_TEXT_H else None
+
+
+def card_text_fits(text: str) -> bool:
+    """Whether a card's text fits the canvas at :data:`CARD_MIN_FONTSIZE`."""
+    return _fitted_card_lines(text, CARD_MIN_FONTSIZE) is not None
+
+
+def _card_char_width(char: str, fontsize: int) -> int:
+    """Conservative pixel advance, without resolving a host/container font."""
+    if char == "\t":
+        # Any starting phase advances by at most one full four-space tab stop.
+        return _CARD_TAB_SPACES * _card_char_width(" ", fontsize)
+    if unicodedata.east_asian_width(char) in {"W", "F"}:
+        em = 2.0
+    elif char in "ijlrtfx.,:;!| ":
+        em = 0.6
+    elif char.isascii():
+        em = 1.0 if char in "MWmw@%&#=+<>^~" else 0.8
+    else:
+        em = 1.25
+    return math.ceil(fontsize * em * _CARD_WIDTH_SAFETY)
+
+
+def _wrap_card_lines(text: str, fontsize: int) -> list[str]:
+    """Insert width-bounded breaks, retaining explicit empty lines.
+
+    A line ended by a wrapped break drops its trailing spaces so it centres on
+    its text; a line ended by an explicit newline or the text's end keeps them.
+    """
+    lines = []
+    for paragraph in text.split("\n"):
+        if not paragraph:
+            lines.append("")
+        while paragraph:
+            width = 0
+            end = 0
+            for char in paragraph:
+                advance = _card_char_width(char, fontsize)
+                if width + advance > CARD_TEXT_W:
+                    break
+                width += advance
+                end += 1
+            # Prefer a word boundary.
+            if end < len(paragraph):
+                space = paragraph.rfind(" ", 0, end)
+                if space >= 0:
+                    end = space + 1
+            end = max(1, end)
+            line, paragraph = paragraph[:end], paragraph[end:]
+            lines.append(line.rstrip(" ") if paragraph else line)
+    return lines
+
 
 def _card_drawtexts(text: str, cfg: Config, *, fontsize: int) -> list[str]:
     """One ``drawtext`` fragment per line of a title/end card.
 
-    A card carries several lines in one ``text`` field (repo name, then the
-    "verified" line, then the install command), and drawtext draws one line per
-    filter, so the text is split on newlines and the lines are stacked around
-    the centre. The text of each line is handed to ``brand.title_card_drawtext``
-    verbatim — this function chooses geometry, never content.
+    Wrap using conservative font advances, then reduce the fontsize and re-wrap
+    until the stacked lines fit the vertical budget, no lower than
+    :data:`CARD_MIN_FONTSIZE`. Explicit newlines and whitespace are retained,
+    except the trailing spaces of wrapped lines. Each line still goes through
+    the brand escaper. Cards fitting these budgets keep their original
+    fragments and geometry.
     """
-    lines = text.split("\n")
+    for size in range(fontsize, CARD_MIN_FONTSIZE - 1, -1):
+        fitted = _fitted_card_lines(text, size)
+        if fitted is not None:
+            lines, fontsize = fitted, size
+            break
+    else:
+        raise PromoError("card text cannot fit the canvas at the minimum fontsize")
     step = round(fontsize * _CARD_LINE_SPACING)
     fragments = []
     for k, line in enumerate(lines):

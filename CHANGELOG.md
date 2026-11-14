@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Promo title and end cards wrap to the canvas margins and shrink their
+  fontsize to fit the frame, never below a 24px floor (#283).
+- The 120-character card limit now counts the raw card text, including
+  whitespace and newlines, so a script whose cards are padded with newlines
+  that passed before can now fail validation.
+- The promo scene validator rejects a card whose lines cannot fit the frame at
+  the 24px floor.
+
 ## [0.8.0] — 2026-08-07
 
 **Multi-format outputs: the promo cut.** `--formats demo,gif,promo` now
