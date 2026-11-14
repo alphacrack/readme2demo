@@ -5,6 +5,7 @@ helper that reconciles the positional repo, ``-gr/--github-repo``, and the
 ``-s/--step-by-step`` guide.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -373,7 +374,11 @@ def test_resume_rejects_file_run_dir(tmp_path):
     file_path.write_text("not a directory")
     result = runner.invoke(app, ["resume", str(file_path)])
     assert result.exit_code != 0
-    assert "directory" in result.output.lower()
+    # Typer >= 0.29 (no longer built on Click) labels the param "dir" rather
+    # than "Directory", and Rich may colour/soft-wrap the panel; assert on the
+    # stable "is a file" phrase after stripping ANSI codes and box borders.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output).replace("│", " ")
+    assert "is a file" in " ".join(plain.split()).lower()
 
 
 # -- regression: run glow-20260710-162012 (missing SDK + Rich-eaten hint) -----------
