@@ -191,15 +191,19 @@ def test_dense_newlines_shrink_to_a_legible_fontsize(
     _assert_geometry(filters)
 
 
+# 42 W fill one line at 24px but wrap at 25px, so this card fits only at the floor.
+_FLOOR_ONLY = "W" * 42 + "\n" * 17 + "W"
+
+
 def _fit_corpus() -> list[str]:
     explicit = ["\n".join(["W"] * n) for n in range(1, 26)]
     runs = ["W" * 40, "W" * 80, "W" * 120, "界" * 60, "界" * 120]
     words = [("readable words " * 8)[:n] for n in (30, 75, 120)]
     wide = [("Ｗ界😀" * 40)[:n] for n in (40, 120)]
-    # Two wrapped lines, then explicit lines, landing on either side of the floor.
+    # Two wrapped lines, then explicit lines, landing on either side of the 18-line limit.
     mixed = [head + "\n" * n + "W" for head in ("W" * 43, "界" * 22) for n in (15, 16, 17)]
     mixed += ["\n".join(["W" * 50] * 2), "W" * 43 + "\n" + "readable words " * 5]
-    return explicit + runs + words + wide + mixed
+    return explicit + runs + words + wide + mixed + [_FLOOR_ONLY]
 
 
 @pytest.mark.parametrize("style", ["minimal", "tech", "energetic"])
@@ -210,7 +214,11 @@ def test_validator_fit_verdict_matches_renderer_refusal(style: str) -> None:
         floor * promo._CARD_LINE_SPACING
     )
     assert (floor, max_lines) == (24, 18)
-    boundary = {"\n".join(["W"] * max_lines): True, "\n".join(["W"] * (max_lines + 1)): False}
+    boundary = {
+        "\n".join(["W"] * max_lines): True,
+        "\n".join(["W"] * (max_lines + 1)): False,
+        _FLOOR_ONLY: True,
+    }
     verdicts = set()
     for text in _fit_corpus() + list(boundary):
         # Within the raw budget and nonblank, so any violation is the fit check.
@@ -266,15 +274,17 @@ def test_tab_stops_fit_canvas_across_phases(
         ("minimal", 9, 48), ("minimal", 10, 44),
         ("tech", 8, 54), ("tech", 9, 49),
         ("energetic", 7, 60), ("energetic", 8, 55),
+        ("minimal", 11, 41),
     ],
     ids=["minimal-fit", "minimal-overflow", "tech-fit", "tech-overflow",
-         "energetic-fit", "energetic-overflow"],
+         "energetic-fit", "energetic-overflow", "exact-height"],
 )
 def test_vertical_fit_stops_at_first_fitting_size(
     style: str, lines: int, expected_size: int, tmp_path: Path,
 ) -> None:
     """Regression: adjacent line counts preserve size or shrink only to the first fit."""
     # Independently solve (lines-1)*round(1.4*size)+2*size <= 652 at each style cap.
+    # 11 lines at 41px fill the height exactly: 10*57 + 82 = 652.
     text = "\n".join(["W"] * lines)
     assert _violations(text) == []
     graph = _graph(text, style, tmp_path, Config())
@@ -327,6 +337,12 @@ def test_wrap_trims_only_wrapped_breaks(tmp_path: Path) -> None:
     assert chunks[-2].endswith("words ")
     assert chunks[-1] == "readable words "
     _assert_preserved(filters, text)
+    # A wrapped break followed only by spaces still trims the wrapped line.
+    spaced = "W" * 18 + " " * 5
+    spaced_filters = _card_filters(_graph(spaced, "tech", tmp_path, Config()), 1)
+    assert [f.removeprefix("drawtext=text=").split(":expansion=none", 1)[0]
+            for f in spaced_filters] == ["W" * 18, "   "]
+    _assert_preserved(spaced_filters, spaced)
     if shutil.which("ffmpeg") is not None:
         _assert_geometry(filters)
 
