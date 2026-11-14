@@ -290,8 +290,8 @@ def test_prune_include_running_selects_every_labelled_container(
         assert set(prune_docker.containers) == every_id - set(expected)
 
 
-@pytest.mark.parametrize("failed_positions", [(0,), (1,), (2,), (0, 2)],
-                         ids=["first", "middle", "last", "first-and-last"])
+@pytest.mark.parametrize("failed_positions", [(0,), (1,), (2,), (0, 2), (0, 1, 2)],
+                         ids=["first", "middle", "last", "first-and-last", "all"])
 @pytest.mark.parametrize("failure, message", [
     (1, "removal denied"),
     (FileNotFoundError("docker CLI not found"), "docker CLI not found"),

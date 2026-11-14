@@ -614,10 +614,11 @@ def prune(
 ) -> None:
     """Remove readme2demo-labelled containers.
 
-    By default only exited and created containers are selected, so a run in
-    progress keeps its sandbox; ``--include-running`` selects every labelled
-    container whatever its state. Each removal failure is reported and the
-    remaining containers are still removed; any failure makes the exit nonzero.
+    By default only exited and created containers are selected, which leaves
+    the running sandbox of a run in progress alone; ``--include-running``
+    selects every labelled container whatever its state. Each removal failure
+    is reported and the remaining containers are still attempted; any failure
+    makes the exit nonzero.
     """
     import subprocess
 

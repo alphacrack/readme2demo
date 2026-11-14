@@ -70,7 +70,7 @@ stage; it is `null` when either timestamp is unavailable or invalid.
 
 A run that is killed can leave its sandbox container behind. `prune` removes
 containers carrying the readme2demo label; by default it removes only exited
-and created ones, so a run in progress keeps its sandbox:
+and created ones, which leaves the running sandbox of a run in progress alone:
 
 ```bash
 readme2demo prune --dry-run           # list the containers prune would remove
@@ -80,9 +80,9 @@ readme2demo prune --include-running   # remove them in every state, running incl
 
 Leaked sandboxes usually keep running, so reaping them needs
 `--include-running`; it also kills the sandbox of any run in progress, so use
-it only once no run is in progress. Without `--dry-run`, `prune` prints
-`Removed N container(s).`; a failed removal is reported, the rest are still
-removed, and the exit code is nonzero.
+it only once no run is in progress. Once the listing succeeds, `prune` without
+`--dry-run` prints `Removed N container(s).`; a failed removal is reported,
+`prune` still tries the rest, and the exit code is nonzero.
 
 ## Outputs
 
