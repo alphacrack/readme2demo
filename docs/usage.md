@@ -66,6 +66,24 @@ The human and `--markdown` reports show the final attempt's duration for each
 stage. `--json` includes the same value as numeric `duration_seconds` per
 stage; it is `null` when either timestamp is unavailable or invalid.
 
+## Cleaning up leaked sandboxes
+
+A run that is killed can leave its sandbox container behind. `prune` removes
+containers carrying the readme2demo label; by default it removes only exited
+and created ones, so a run in progress keeps its sandbox:
+
+```bash
+readme2demo prune --dry-run           # list the containers prune would remove
+readme2demo prune                     # remove exited and created sandbox containers
+readme2demo prune --include-running   # remove them in every state, running included
+```
+
+Leaked sandboxes usually keep running, so reaping them needs
+`--include-running`; it also kills the sandbox of any run in progress, so use
+it only once no run is in progress. Without `--dry-run`, `prune` prints
+`Removed N container(s).`; a failed removal is reported, the rest are still
+removed, and the exit code is nonzero.
+
 ## Outputs
 
 Artifacts land in `runs/<run-id>/`: `tutorial.md`, `step_by_step.md`,
