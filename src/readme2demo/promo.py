@@ -44,7 +44,7 @@ Grounding (the one non-negotiable invariant), enforced structurally:
   duration gate into a no-op.
 * **At least one ``demo_segment``** per script, or the cut is refused.
 * **Card and caption wording is preserved** from the script. Cards wrap to the
-  canvas margins and reduce their fontsize when explicit lines fill the height.
+  canvas margins and reduce their fontsize when their lines fill the height.
   Every string reaches the filtergraph through ``brand.title_card_drawtext``
   (and therefore ``brand.escape_drawtext``) — escaping is never reimplemented
   here. Wrapping inserts line breaks and drops only the trailing spaces of a
@@ -617,8 +617,8 @@ def _card_drawtexts(text: str, cfg: Config, *, fontsize: int) -> list[str]:
     until the stacked lines fit the vertical budget, no lower than
     :data:`CARD_MIN_FONTSIZE`. Explicit newlines and whitespace are retained,
     except the trailing spaces of wrapped lines. Each line still goes through
-    the brand escaper;
-    Cards fitting these budgets keep their original fragments and geometry.
+    the brand escaper. Cards fitting these budgets keep their original
+    fragments and geometry.
     """
     for size in range(fontsize, CARD_MIN_FONTSIZE - 1, -1):
         fitted = _fitted_card_lines(text, size)
