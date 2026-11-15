@@ -5,6 +5,49 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-11-15
+
+**Fixes, plus groundwork for credential isolation.** This release mostly makes
+failures clearer: a missing or corrupt manifest, a stopped Docker daemon, a
+TOML config that Python 3.10 silently ignored, and OpenHands runs whose real
+exit codes were being lost. It also adds the `credential_env_vars()` engine
+hook, which later credential-placeholder work will build on, and a local
+script that mirrors PR CI.
+
+### Added
+- `Engine.credential_env_vars()` hook: engines list the env var names they
+  treat as the model credential. It fails closed by default: every
+  `required_env()` name matching `KEY|TOKEN|SECRET` counts. Claude Code and
+  OpenHands override it explicitly. Nothing uses it yet; it is groundwork for
+  #165 (#241, thanks @Nitjsefnie).
+- `scripts/dev-check.sh`, a local mirror of the PR CI gates (lint, mypy,
+  tests with the 80% coverage floor), kept in sync with `ci.yml` by a test
+  (#267, thanks @ulises-jeremias).
+
+### Fixed
+- OpenHands exit codes are read from the transcript metadata, so a step's
+  real exit status is kept instead of being lost (#284, thanks @Nitjsefnie).
+- `readme2demo.toml` is no longer silently ignored on Python 3.10: `tomli` is
+  now a dependency for Python < 3.11, and a loud warning is shown if no TOML
+  parser is available (#264, thanks @ulises-jeremias).
+- Preflight now tells "Docker not installed" apart from "Docker daemon not
+  running" with a `docker info` probe limited to 5s, instead of failing
+  confusingly mid-run (#273, thanks @ulises-jeremias).
+- `report` and `resume` print a friendly `✗` error and exit 2 when
+  `manifest.json` is missing or corrupt, instead of a traceback (#268, thanks
+  @ulises-jeremias).
+- The GIF preview warns when its ffmpeg call fails instead of failing silently
+  (#266, thanks @ulises-jeremias).
+- The orchestrator takes its stage order only from `STAGES` (#265, thanks
+  @ulises-jeremias).
+
+### Changed
+- The default Anthropic model is defined once, as `llm.DEFAULT_ANTHROPIC_MODEL`
+  (#270, thanks @ulises-jeremias).
+- A release consistency test keeps the `pyproject.toml`, `CITATION.cff` and
+  CHANGELOG versions in sync (#269, thanks @ulises-jeremias).
+- The CLI resume test is robust to the wording in Typer 0.29 (#292).
+
 ## [0.8.0] — 2026-08-07
 
 **Multi-format outputs: the promo cut.** `--formats demo,gif,promo` now
@@ -465,7 +508,8 @@ Initial public release.
   `commands.sh`, `demo.tape`, `demo.mp4`, `demo.gif`, and `howto.jsonld`.
 - Verified `examples/toolhive/` reference run committed as proof.
 
-[Unreleased]: https://github.com/alphacrack/readme2demo/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/alphacrack/readme2demo/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.9.0
 [0.8.0]: https://github.com/alphacrack/readme2demo/releases/tag/v0.8.0
 [0.7.5]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.5
 [0.7.4]: https://github.com/alphacrack/readme2demo/releases/tag/v0.7.4
