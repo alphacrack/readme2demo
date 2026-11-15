@@ -10,7 +10,11 @@ Nothing is published unverified; on failure the orchestrator feeds
 
 from __future__ import annotations
 
+import posixpath
+import re
+import shlex
 from pathlib import Path
+from typing import Optional
 
 from readme2demo.config import Config
 from readme2demo.sandbox import Sandbox
@@ -21,6 +25,9 @@ _MARKER = "R2D_VERIFY_OK"
 # /work, which git refuses if anything (like the script itself) is already
 # there. /tmp keeps the clone target pristine.
 _SCRIPT_DST = "/tmp/commands.sh"
+# images/base/Dockerfile creates this home for USER demo; keep the contract
+# covered by test_issue_96_home_matches_base_image when the image user changes.
+_SANDBOX_HOME = "/home/demo"
 
 
 def run_verify(run_dir: Path, plan: Plan, cfg: Config) -> VerifyReport:
@@ -134,6 +141,110 @@ def _export_worktree(sandbox: Sandbox, run_dir: Path) -> None:
         shutil.rmtree(dest, ignore_errors=True)
 
 
+def _cwd_segments(line: str) -> Optional[tuple[list[list[str]], bool]]:
+    """Split simple chains while retaining quotes for cd's tilde handling.
+
+    Pipes and redirects make a line opaque, but need not end later analysis.
+    Structural syntax still stops it so a shell body cannot masquerade as cd.
+    """
+    tokens = re.finditer(
+        r"""\s+|(?P<comment>\#.*)|(?P<heredoc><<)|(?P<chain>&&|;)|"""
+        r"(?P<pipe>\|[|&]?)|(?P<redirect><>|>\||[<>]&|&>>?|>>?|<)|"
+        r"""(?P<word>(?:[^\s'"\\;&|()<>]+|'[^']*'|"(?:\\.|[^"\\])*"|\\.)+)"""
+        r"|(?P<unsupported>.)",
+        line,
+    )
+    segments: list[list[str]] = [[]]
+    opaque = False
+    redirect_target = False
+    segment_has_redirect = False
+    trailing_semicolon = False
+    word_end = -1
+    for token in tokens:
+        if token.lastgroup == "comment":
+            break
+        if token.lastgroup in {"unsupported", "heredoc"}:
+            return None
+        if token.lastgroup in {"chain", "pipe", "redirect"} and redirect_target:
+            return None
+        if token.lastgroup in {"chain", "pipe"}:
+            if not segments[-1] and not segment_has_redirect:
+                return None
+            segments.append([])
+            segment_has_redirect = False
+            opaque |= token.lastgroup == "pipe"
+            trailing_semicolon = token.group() == ";"
+        elif token.lastgroup == "redirect":
+            opaque = redirect_target = True
+            trailing_semicolon = False
+            if segments[-1] and word_end == token.start() and segments[-1][-1].isdigit():
+                segments[-1].pop()  # adjacent file descriptor, e.g. 2>log
+        elif token.lastgroup == "word":
+            trailing_semicolon = False
+            if redirect_target:
+                redirect_target = False  # file/descriptor operand, not a command
+                segment_has_redirect = True
+            else:
+                segments[-1].append(token.group())
+                word_end = token.end()
+    if redirect_target or (
+        not segments[-1] and not segment_has_redirect and not trailing_semicolon and len(segments) > 1
+    ):
+        return None  # a trailing pipe/redirect may continue on the next line
+    for segment in segments:
+        if not segment:
+            continue
+        # Do not mistake conditional/function bodies for executed commands,
+        # or guess the environment after assignments or shell builtins.
+        if segment[0] in {
+            "if", "then", "elif", "else", "fi", "for", "while", "until",
+            "do", "done", "case", "esac", "select", "function", "{", "}",
+        }:
+            return None
+        command = shlex.split(segment[0])[0]
+        if (
+            command in {"source", ".", "eval", "command", "builtin", "pushd", "popd"}
+            or re.match(r"\w+=", command)
+            or any(char in command for char in "$`")
+        ):
+            return None
+        if command in {"export", "unset", "readonly", "declare", "typeset"} and any(
+            shlex.split(word)[0].split("=")[0] in {"HOME", "CDPATH", "OLDPWD", "PWD"}
+            or any(char in word for char in "$`")
+            for word in segment[1:]
+        ):
+            return None
+        segment[0] = command
+    return segments, opaque
+
+
+def _cd_target(words: list[str], cwd: Optional[str], previous: Optional[str]) -> Optional[str]:
+    """Resolve a literal cd operand without evaluating shell expansions."""
+    if words[:1] == ["--"]:
+        words = words[1:]
+    if not words:
+        return _SANDBOX_HOME
+    if len(words) != 1:
+        return None
+    raw = words[0]
+    # Be conservative even when these characters are quoted: shell expansion
+    # and filesystem-dependent globbing are outside this hints-only analysis.
+    if any(char in raw for char in "$`*?[]{}"):
+        return None
+    target = shlex.split(raw)[0]
+    if target == "-":
+        return previous
+    if target.startswith("-") or not target:
+        return None
+    if raw == "~" or raw.startswith("~/"):
+        target = _SANDBOX_HOME + target[1:]
+    elif raw.startswith("~"):
+        return None  # another user's home is unknown
+    if posixpath.isabs(target):
+        return posixpath.normpath(target)
+    return posixpath.normpath(posixpath.join(cwd, target)) if cwd is not None else None
+
+
 def cwd_hints(script_text: str) -> list[str]:
     """Static cwd analysis of commands.sh for the distiller feedback loop.
 
@@ -143,31 +254,41 @@ def cwd_hints(script_text: str) -> list[str]:
     intend (tfdrift regression: ``cd /tmp`` for a download, then
     ``pip install -e .`` editable-installed /tmp instead of the repo).
     Hints only — precision for the retry prompt, never a hard gate.
-    """
-    import re as _re
 
-    rel_re = _re.compile(r"(^|\s)(\./|\-e \.($|\s)|\.($|\s))")
-    chain_split = _re.compile(r"\s*(?:&&|;)\s*")
+    Tracks literal cd operands in simple &&/; chains, assuming they succeed.
+    Unknown targets suppress hints until a known directory is restored;
+    ordinary pipes/redirects preserve cwd, but an obscured cd makes it unknown.
+    Unsupported structural syntax stops analysis. No commands are executed.
+    """
+    rel_re = re.compile(r"(^|\s)(\./|\-e \.($|\s)|\.($|\s))")
     hints: list[str] = []
-    cwd = "/work"
+    cwd: Optional[str] = "/work"
+    previous: Optional[str] = None
     for raw in script_text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
+        parsed = _cwd_segments(line)
+        if parsed is None:
+            break
+        segments, opaque = parsed
+        cd_segments = [seg for seg in segments if seg[:1] == ["cd"]]
+        if opaque and cd_segments:
+            # Do not infer whether a piped/conditional/redirected cd ran in the
+            # current shell, or retain OLDPWD after an untracked directory change.
+            cwd = previous = None
+            continue
         # A relative path is only suspicious when the cwd has drifted away
         # from the repo root AND the line doesn't set its own directory.
-        if cwd != "/work" and "cd " not in line and rel_re.search(line):
+        if cwd not in (None, "/work") and not cd_segments and rel_re.search(line):
             hints.append(
                 f"`{line[:90]}` uses a relative path while the working "
                 f"directory is `{cwd}` — is that the intended directory? "
                 "(cd persists across lines)"
             )
         # Track cd through every chain segment of the line.
-        for seg in chain_split.split(line):
-            seg = seg.strip()
-            if seg.startswith("cd ") or seg == "cd":
-                target = seg[2:].strip().strip("'\"") or "~"
-                cwd = target if target.startswith("/") else f"{cwd}/{target}"
+        for seg in cd_segments:
+            cwd, previous = _cd_target(seg[1:], cwd, previous), cwd
     return hints
 
 
