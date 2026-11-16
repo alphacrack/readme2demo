@@ -4,6 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/alphacrack/readme2demo/blob/main/LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://github.com/alphacrack/readme2demo/blob/main/pyproject.toml)
 
+🌍 [Русский](README.ru.md)
+
 <!-- HERO:START — scripts/self-demo.sh rewrites this block with a fresh self-run.
      Run it locally (needs Docker + VHS + a model credential):
        ./scripts/self-demo.sh
