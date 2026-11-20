@@ -35,6 +35,7 @@ from readme2demo.orchestrator import (
     summarize_markdown,
 )
 from readme2demo import __version__ as version
+from readme2demo import sandbox
 
 
 # Sentinel value the argv normalizer injects after a bare provider preset flag
@@ -599,6 +600,70 @@ def report(
     console.print(escape(summarize(manifest)))
     raise typer.Exit(_report_exit_code(manifest))
 
+
+
+@app.command()
+def prune(
+    dry_run: bool = typer.Option(False, "--dry-run", help="List container IDs without removing them"),
+    include_running: bool = typer.Option(
+        False, "--include-running",
+        help="Remove labelled containers in every state, running and paused included. "
+             "Leaked sandboxes keep running, so stop every in-progress readme2demo run "
+             "before using this.",
+    ),
+) -> None:
+    """Remove readme2demo-labelled containers.
+
+    By default only exited and created containers are selected, which leaves
+    the running sandbox of a run in progress alone; ``--include-running``
+    selects every labelled container whatever its state. Each removal failure
+    is reported and the remaining containers are still attempted; any failure
+    makes the exit nonzero.
+    """
+    import subprocess
+
+    cmd = ["docker", "ps", "--all", "--quiet", "--no-trunc",
+           "--filter", f"label={sandbox.CONTAINER_LABEL}"]
+    if not include_running:
+        cmd += ["--filter", "status=created", "--filter", "status=exited"]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=60, errors="replace",
+        )
+        if proc.returncode != 0:
+            typer.echo(f"docker ps failed ({proc.returncode}): {proc.stderr.strip()}", err=True)
+            raise typer.Exit(1)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        typer.echo(f"Docker prune failed: {exc}", err=True)
+        raise typer.Exit(1) from None
+    container_ids = proc.stdout.split()
+    if dry_run:
+        for container_id in container_ids:
+            typer.echo(container_id)
+        return
+    removed = 0
+    failed = False
+    for container_id in container_ids:
+        try:
+            proc = subprocess.run(
+                ["docker", "rm", "-f", container_id],
+                capture_output=True, text=True, timeout=60, errors="replace",
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            typer.echo(f"docker rm failed for {container_id}: {exc}", err=True)
+            failed = True
+            continue
+        if proc.returncode != 0:
+            typer.echo(
+                f"docker rm failed for {container_id} ({proc.returncode}): {proc.stderr.strip()}",
+                err=True,
+            )
+            failed = True
+            continue
+        removed += 1
+    typer.echo(f"Removed {removed} container(s).")
+    if failed:
+        raise typer.Exit(1)
 
 
 def _docker_daemon_detail() -> str | None:
